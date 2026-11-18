@@ -1,0 +1,43 @@
+# Campaña experimental del OE4 (RF-41 a RF-46).
+# Compara el detector causal con el método base de umbrales sobre los mismos datos.
+name: campana_oe4
+mode: offline               # las latencias reales se miden con network_subset
+repetitions: 30             # repeticiones por condición (semillas distintas)
+base_seed: 1000
+
+scenarios:
+  - scenarios/normal.yaml
+  - scenarios/sesgo_lt102.yaml
+  - scenarios/rampa_lt102.yaml
+  - scenarios/replay_lt102.yaml
+
+sweeps:                     # análisis de sensibilidad (RF-45)
+  sesgo_lt102:
+    attacks.0.params.bias: [0.5, 1.0, 2.0, 4.0]
+  rampa_lt102:
+    attacks.0.params.slope_per_s: [0.002, 0.005, 0.01, 0.02]
+
+detectors: [causal, threshold]
+
+metrics:                    # RF-41, RF-42
+  - detection_rate
+  - false_positive_rate
+  - false_alarms_per_hour
+  - detection_delay
+  - precision
+  - recall
+  - f1
+  - roc_auc
+  - processing_time
+  - opcua_latency
+  - response_time
+
+statistics:
+  paired_test: wilcoxon
+  confidence_level: 0.95
+
+network_subset:             # corridas en red para medir latencia y tiempo de respuesta
+  repetitions: 5
+  scenarios: [sesgo_lt102, replay_lt102]
+
+output_dir: results/campana_oe4

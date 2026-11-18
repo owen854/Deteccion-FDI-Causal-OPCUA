@@ -1,0 +1,18 @@
+# Escenario de operación normal con perturbaciones legítimas (RF-04, RF-22).
+# Sirve para generar datos de entrenamiento/validación y medir falsos positivos.
+name: normal
+description: Operación normal con cambios de consigna y perturbaciones legítimas.
+duration_s: 1800
+seed: 1
+
+setpoint_profile:           # RF-09
+  - { t_s: 0, value_cm: 25.0 }
+  - { t_s: 600, value_cm: 30.0 }
+  - { t_s: 1200, value_cm: 22.0 }
+
+disturbances:               # RF-04
+  - { type: outlet_area, target: tank2, t_s: 900, duration_s: 120, relative_change: 0.10 }
+  - { type: leak, target: tank1, t_s: 1500, duration_s: 60, flow_cm3_s: 2.0 }
+  - { type: process_noise, target: tank1, t_s: 0, duration_s: 1800, std_cm3_s: 0.5 }
+
+attacks: []

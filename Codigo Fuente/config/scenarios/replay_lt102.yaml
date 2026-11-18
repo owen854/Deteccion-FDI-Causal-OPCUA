@@ -1,0 +1,22 @@
+# Ataque de repetición (replay) sobre el nivel del tanque 2 (RF-19, RF-22).
+# Graba record_s segundos de datos legítimos antes del ataque y los reproduce en bucle.
+# Se incluye un cambio de consigna durante el ataque: en estado estacionario puro,
+# el replay es indetectable sin marca de agua (Mo y Sinopoli, 2009; RF-39).
+name: replay_lt102
+description: Reproducción de 120 s grabados de LT-102 con cambio de consigna durante el ataque.
+base: normal.yaml
+seed: 13
+
+setpoint_profile:
+  - { t_s: 0, value_cm: 25.0 }
+  - { t_s: 1000, value_cm: 28.0 }
+  - { t_s: 1500, value_cm: 24.0 }
+
+attacks:
+  - id: A1
+    type: replay
+    targets: [LT-102]
+    start_s: 900
+    duration_s: 400
+    params: { record_s: 120 }
+    stealth: { enabled: false }
