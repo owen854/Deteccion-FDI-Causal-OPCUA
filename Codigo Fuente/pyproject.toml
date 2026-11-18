@@ -19,7 +19,7 @@ keywords = ["OPC UA", "FDI", "ciberseguridad", "análisis causal", "Industria 4.
 dependencies = [
     "asyncua>=1.1,<2",
     "cryptography>=42",
-    "numpy>=1.26,<3",
+    "numpy>=2.0,<3",
     "scipy>=1.11",
     "pandas>=2.1",
     "pyarrow>=14",
@@ -53,6 +53,10 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    # asyncua 1.1.x usa APIs de pyOpenSSL marcadas como obsoletas; no afecta al proyecto
+    "ignore::DeprecationWarning:asyncua",
+]
 markers = [
     "integration: pruebas que levantan servidores OPC UA locales (requieren asyncua)",
 ]
