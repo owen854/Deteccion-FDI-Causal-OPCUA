@@ -1,0 +1,15 @@
+# Ataque de sesgo sigiloso sobre el nivel del tanque 2 (RF-17, RF-20, RF-22).
+# yₐ(k) = y(k) + b durante [start_s, start_s + duration_s)
+name: sesgo_lt102
+description: Sesgo constante de +2 cm sobre LT-102 inyectado en el gateway comprometido.
+base: normal.yaml           # hereda consigna y perturbaciones
+seed: 11
+
+attacks:
+  - id: A1
+    type: bias
+    targets: [LT-102]
+    start_s: 900
+    duration_s: 300
+    params: { bias: 2.0 }
+    stealth: { enabled: true, envelope: [2.0, 45.0], max_rate_per_s: 0.5 }

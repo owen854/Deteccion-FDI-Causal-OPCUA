@@ -1,0 +1,26 @@
+# Dependencias de ejecución de FDISim-OPCUA (Documento 02, §7.8)
+# Instalar en un entorno virtual con Python 3.12: pip install -r requirements.txt
+
+# Comunicación OPC UA y criptografía (M3)
+asyncua>=1.1,<2
+cryptography>=42
+
+# Simulación numérica y datos (M1, M5)
+numpy>=1.26,<3
+scipy>=1.11
+pandas>=2.1
+pyarrow>=14
+
+# Análisis causal, estadística y métricas (M6–M9)
+networkx>=3.2
+statsmodels>=0.14
+scikit-learn>=1.4
+tigramite>=5.2
+
+# Interfaz y visualización (M10)
+nicegui>=2.0
+plotly>=5.20
+matplotlib>=3.8
+
+# Configuración (M11)
+pyyaml>=6.0

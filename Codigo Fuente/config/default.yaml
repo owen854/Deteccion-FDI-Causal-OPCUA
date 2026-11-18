@@ -1,0 +1,82 @@
+# Configuración global de FDISim-OPCUA (RF-53).
+# Los valores numéricos son iniciales y se calibran en la Fase 2 (Documento 03).
+# Unidades: longitudes en cm, caudales en cm³/s, tiempos en s.
+
+simulation:
+  dt_s: 0.1                 # paso de integración de la planta (RF-05)
+  time_scale: 1.0           # 1 = tiempo real; > 1 acelerado (RF-05, RNF-04)
+  duration_s: 1800
+  seed: 42
+  mode: network             # network | offline (RF-38, RF-43)
+  integrator: solve_ivp     # solve_ivp | rk4 (rk4 para el modo offline acelerado)
+
+plant:                      # RF-01, RF-02
+  gravity_cm_s2: 981.0
+  tank1: { area_cm2: 153.9, outlet_area_cm2: 0.50, max_height_cm: 50.0, initial_level_cm: 16.0 }
+  tank2: { area_cm2: 153.9, outlet_area_cm2: 0.40, max_height_cm: 50.0, initial_level_cm: 25.0 }
+  pump: { gain_cm3_s_per_pct: 1.5, time_constant_s: 0.5, min_pct: 0.0, max_pct: 100.0 }
+  sensors:                  # RF-03
+    LT-101: { noise_std: 0.10, resolution: 0.01, calibration_bias: 0.0 }
+    LT-102: { noise_std: 0.10, resolution: 0.01, calibration_bias: 0.0 }
+    FT-101: { noise_std: 0.50, resolution: 0.1, calibration_bias: 0.0 }
+
+control:                    # RF-07 a RF-09 (ganancias a sintonizar en la Fase 2)
+  controlled_tag: LT-102
+  manipulated_tag: P-101
+  setpoint_cm: 25.0
+  ts_s: 0.5
+  kp: 8.0
+  ki: 0.15
+  kd: 0.0
+  derivative_filter_n: 10
+  anti_windup: clamping     # clamping | back_calculation
+  out_min: 0.0
+  out_max: 100.0
+
+opcua:                      # RF-10 a RF-15
+  host: 127.0.0.1           # RNF-11: solo localhost o red de laboratorio aislada
+  namespace_uri: "urn:unipamplona:siddfai:fdisim"
+  plant_server: { port: 4840, path: /fdisim/planta }
+  gateway: { port: 4841, path: /fdisim/gateway }
+  security:                 # RNF-09
+    mode: SignAndEncrypt    # None (solo depuración) | Sign | SignAndEncrypt
+    policy: Basic256Sha256  # Basic256Sha256 | Aes128_Sha256_RsaOaep | Aes256_Sha256_RsaPss
+    user_auth: username     # anonymous | username | certificate
+    certs_dir: certs
+    allow_insecure_debug: false
+  subscription:
+    publishing_interval_ms: 100
+    sampling_interval_ms: 50
+  reconnect: { initial_delay_s: 0.5, max_delay_s: 5.0 }
+
+detection:                  # RF-33 a RF-40
+  period_s: 0.5
+  causal_model_dir: data/models/causal_v1
+  residuals: { multistep_horizon: 20 }
+  decision:
+    target_fpr: 0.01
+    cusum: { k: 0.5, h: 5.0 }
+    ewma: { lambda: 0.2, L: 3.0 }
+    alarm_hold_s: 2.0
+  structural_check: { enabled: true, window_s: 60, step_s: 10 }
+  threshold_baseline:       # método base (RF-40)
+    k_sigma: 3.0
+    operating_limits:
+      LT-101: [2.0, 45.0]
+      LT-102: [2.0, 45.0]
+      FT-101: [0.0, 150.0]
+      P-101: [0.0, 100.0]
+
+data:                       # RF-25 a RF-27
+  raw_dir: data/raw
+  processed_dir: data/processed
+  format: parquet           # parquet | csv
+
+ui:                         # RF-47 a RF-52
+  host: 127.0.0.1
+  port: 8080
+  refresh_hz: 4
+
+logging:                    # RF-55
+  level: INFO
+  dir: logs

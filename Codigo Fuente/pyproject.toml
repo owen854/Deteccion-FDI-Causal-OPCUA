@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fdisim"
+version = "0.1.0"
+description = "Marco de simulación para la detección de inyección de datos falsos (FDI) en redes OPC UA mediante análisis causal"
+readme = "README.md"
+requires-python = ">=3.11"
+# Licencia: por definir por el equipo (RNF-21). Al decidirla, usar una expresión SPDX,
+# p. ej. license = "MIT" (verificar compatibilidad con tigramite, GPL-3.0, si se distribuye).
+authors = [
+    { name = "Juan Felipe Mantilla Claro" },
+    { name = "Owen Yesid Fuentes Lagares" },
+    { name = "Jesús David Leal Espinel" },
+]
+keywords = ["OPC UA", "FDI", "ciberseguridad", "análisis causal", "Industria 4.0"]
+dependencies = [
+    "asyncua>=1.1,<2",
+    "cryptography>=42",
+    "numpy>=1.26,<3",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    "pyarrow>=14",
+    "networkx>=3.2",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.4",
+    "tigramite>=5.2",
+    "nicegui>=2.0",
+    "plotly>=5.20",
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+    "pre-commit>=3.7",
+    "jupyterlab>=4",
+]
+
+[project.scripts]
+fdisim = "fdisim.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: pruebas que levantan servidores OPC UA locales (requieren asyncua)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.coverage.run]
+source = ["fdisim"]
+omit = ["src/fdisim/ui/*"]

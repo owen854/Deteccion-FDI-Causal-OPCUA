@@ -1,0 +1,11 @@
+-r requirements.txt
+
+# Pruebas y calidad (RNF-17)
+pytest>=8
+pytest-asyncio>=0.23
+pytest-cov>=5
+ruff>=0.5
+pre-commit>=3.7
+
+# Análisis exploratorio
+jupyterlab>=4

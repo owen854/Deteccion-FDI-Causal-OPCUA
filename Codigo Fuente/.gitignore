@@ -1,0 +1,35 @@
+# Entornos y cachés
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Secretos: certificados, claves y credenciales (RNF-10)
+certs/*
+!certs/.gitkeep
+*.pem
+*.der
+*.key
+.env
+
+# Datos, modelos, resultados y bitácoras: se trazan con manifiestos (RF-26)
+data/raw/*
+data/processed/*
+data/models/*
+!data/**/.gitkeep
+results/*
+!results/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Editores
+.vscode/
+.idea/

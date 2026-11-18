@@ -1,0 +1,15 @@
+# Ataque de rampa sigiloso sobre el nivel del tanque 2 (RF-18, RF-20, RF-22).
+# yₐ(k) = y(k) + r·(t − tₛ), con desviación máxima opcional.
+name: rampa_lt102
+description: Deriva lenta de 0,01 cm/s sobre LT-102 hasta un máximo de 5 cm.
+base: normal.yaml
+seed: 12
+
+attacks:
+  - id: A1
+    type: ramp
+    targets: [LT-102]
+    start_s: 900
+    duration_s: 600
+    params: { slope_per_s: 0.01, max_deviation: 5.0 }
+    stealth: { enabled: true, envelope: [2.0, 45.0], max_rate_per_s: 0.5 }
