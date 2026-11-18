@@ -3,7 +3,12 @@
 Marco de simulación para la **detección de inyección de datos falsos (FDI) en redes OPC UA mediante análisis causal**.
 Proyecto del semillero SIDDFAI (grupo A&C), Universidad de Pamplona.
 
-> **Estado: Fase 0 completada.** La arquitectura, la jerarquía de carpetas, los contratos de datos, las interfaces abstractas, la configuración y las pruebas de aceptación ya están creados. Las funciones que aún no existen lanzan `NotImplementedError` con la fase del plan y el requerimiento que las implementa (p. ej. `"Fase 4 — RF-17: ataque de sesgo"`).
+> **Estado: Fases 0, 1 y 2 completadas.**
+> - **Fase 0:** arquitectura, contratos de datos, interfaces, configuración y pruebas de aceptación.
+> - **Fase 1:** seguridad OPC UA (PKI por componente, listas de confianza, usuarios, políticas Basic256Sha256 / Aes128_Sha256_RsaOaep / Aes256_Sha256_RsaPss), modelo de información real y pruebas de concepto, con el cifrado verificado en Wireshark.
+> - **Fase 2:** modelo de dos tanques (SciPy y RK4), sensores, bomba, perturbaciones legítimas, PI sintonizado y lazo cerrado offline.
+>
+> Las funciones de fases posteriores lanzan `NotImplementedError` con la fase y el requerimiento que las implementa (p. ej. `"Fase 4 — RF-17: ataque de sesgo"`).
 
 Documentos de referencia (carpeta `Documentacion/` del repositorio):
 
@@ -36,15 +41,16 @@ Codigo Fuente/
 ├── certs/                  certificados X.509 locales (no versionados)
 ├── data/                   raw/ · processed/ · models/ (no versionados)
 ├── results/  logs/         reportes, figuras y bitácoras
-├── docs/                   arquitectura, modelo de información, guía de experimentos
+├── docs/                   arquitectura, modelo de información, guías de verificación y experimentos
 ├── notebooks/              análisis exploratorio
-├── scripts/                verificar_entorno.py · generar_certificados.py
+├── scripts/                verificar_entorno · generar_certificados · poc_opcua_segura
+│                           verificar_cifrado · calibrar_lazo
 ├── src/fdisim/
 │   ├── cli.py              comandos: run · train · detect · campaign · report · ui · certs
 │   ├── common/             contratos de datos (types), config, reloj, plano de experimento
 │   ├── process/      M1    modelo de dos tanques, sensores, bomba, perturbaciones
-│   ├── control/      M2    PID discreto y soft-PLC cliente OPC UA
-│   ├── opcua/        M3    modelo de información, seguridad, servidor de planta, gateway
+│   ├── control/      M2    PID discreto, consigna, indicadores de desempeño, soft-PLC
+│   ├── opcua/        M3    modelo de información, seguridad, fábrica, servidor, gateway
 │   ├── attacks/      M4    sesgo, rampa, replay, sigilo, programador, inyector
 │   ├── data/         M5    historiador, almacenamiento con manifiesto, datasets
 │   ├── causal/       M6    grafo físico, PCMCI/Granger, comparación, SCM
@@ -104,7 +110,41 @@ Se instalan aparte, fuera de Python:
 pytest
 ```
 
-Resultado esperado en la Fase 0: las pruebas de estructura pasan; las pruebas de aceptación de fases futuras aparecen como `xfailed` (marcadas con `pending(...)`), y las de integración se omiten si `asyncua` no está instalado. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
+Resultado esperado tras la Fase 2: 128 pruebas superadas y 15 `xfailed`. Las `xfailed` son pruebas de aceptación de fases futuras, marcadas con `pending(...)`. Las pruebas de integración levantan servidores OPC UA reales en localhost y se omiten si `asyncua` no está instalado. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
+
+Cobertura (RNF-17). Mídala sobre las pruebas unitarias; con las de integración, la medición se cuelga por los hilos de asyncua:
+
+```bash
+pytest -m "not integration" --cov=fdisim
+```
+
+## Fase 1: seguridad OPC UA
+
+```bash
+python scripts/generar_certificados.py
+```
+
+```bash
+python scripts/poc_opcua_segura.py
+```
+
+```bash
+python scripts/verificar_cifrado.py
+```
+
+El procedimiento completo, incluida la prueba manual con UaExpert, está en [docs/guia_verificacion_opcua.md](docs/guia_verificacion_opcua.md).
+
+## Fase 2: proceso y control
+
+```bash
+python scripts/calibrar_lazo.py --escenario config/scenarios/escalon_consigna.yaml
+```
+
+```bash
+python scripts/calibrar_lazo.py
+```
+
+El primero verifica RF-07 en un escalón nominal 25 → 30 cm: sobrepaso ≈ 6 %, error estacionario < 0,1 %. El segundo simula el escenario `normal`, con consignas y perturbaciones legítimas. `--barrido` repite la sintonía de Kp, Ki y Kd. Las figuras y los resúmenes quedan en `results/fase2/`.
 
 ## Uso previsto
 
