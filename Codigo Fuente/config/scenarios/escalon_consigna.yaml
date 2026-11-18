@@ -1,0 +1,13 @@
+# Escalón de consigna en operación nominal (criterio de aceptación de RF-07).
+# Sin perturbaciones ni ataques: sirve para sintonizar y verificar el PID.
+name: escalon_consigna
+description: Escalón de consigna de 25 a 30 cm en operación nominal.
+duration_s: 1500
+seed: 7
+
+setpoint_profile:
+  - { t_s: 0, value_cm: 25.0 }
+  - { t_s: 100, value_cm: 30.0 }
+
+disturbances: []
+attacks: []

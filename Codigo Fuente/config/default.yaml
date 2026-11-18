@@ -20,13 +20,16 @@ plant:                      # RF-01, RF-02
     LT-102: { noise_std: 0.10, resolution: 0.01, calibration_bias: 0.0 }
     FT-101: { noise_std: 0.50, resolution: 0.1, calibration_bias: 0.0 }
 
-control:                    # RF-07 a RF-09 (ganancias a sintonizar en la Fase 2)
+control:                    # RF-07 a RF-09
   controlled_tag: LT-102
   manipulated_tag: P-101
   setpoint_cm: 25.0
   ts_s: 0.5
-  kp: 8.0
-  ki: 0.15
+  # PI sintonizado en la Fase 2 (regla SIMC + barrido con scripts/calibrar_lazo.py):
+  # escalón 25→30 cm: sobrepaso ≈ 6 %, error estacionario < 0,1 %, establecimiento ≈ 455 s.
+  # La acción derivativa se descartó: acelera poco y multiplica el ruido sobre la bomba.
+  kp: 2.5
+  ki: 0.015
   kd: 0.0
   derivative_filter_n: 10
   anti_windup: clamping     # clamping | back_calculation
