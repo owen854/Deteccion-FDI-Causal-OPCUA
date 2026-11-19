@@ -95,6 +95,7 @@ class GroundTruthRecord:
     measured_values: Mapping[str, float]
     attack_active: bool = False
     attack_id: str | None = None
+    source_ts: float | None = None  # SourceTimestamp con que se publicó el paso (modo en red)
 
 
 @dataclass(frozen=True, slots=True)
