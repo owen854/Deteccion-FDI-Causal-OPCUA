@@ -1,0 +1,20 @@
+# Ataque de repetición (replay) sobre el nivel del tanque 1 (RF-19, RF-22).
+# Con un cambio de consigna durante el ataque, h1 real cambia y el valor repetido no.
+name: replay_lt101
+description: Reproducción de 120 s grabados de LT-101 con cambio de consigna durante el ataque.
+base: normal.yaml
+seed: 23
+
+setpoint_profile:
+  - { t_s: 0, value_cm: 25.0 }
+  - { t_s: 1000, value_cm: 28.0 }
+  - { t_s: 1500, value_cm: 24.0 }
+
+attacks:
+  - id: A1
+    type: replay
+    targets: [LT-101]
+    start_s: 900
+    duration_s: 400
+    params: { record_s: 120 }
+    stealth: { enabled: false }

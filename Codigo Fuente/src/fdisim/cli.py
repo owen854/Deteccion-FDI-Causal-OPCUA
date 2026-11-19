@@ -26,14 +26,26 @@ from fdisim.common import paths
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    from fdisim.common.config import ConfigError
+
     if args.mode == "offline":
         from fdisim.orchestration.offline import run_scenario_offline
 
-        run_dir = run_scenario_offline(Path(args.scenario), Path(args.config), args.seed)
-        print(f"Corrida guardada en {run_dir}")
+        try:
+            run_dir = run_scenario_offline(
+                Path(args.scenario),
+                Path(args.config),
+                args.seed,
+                duration_s=args.duracion,
+                integrator=args.integrador,
+            )
+        except ConfigError as exc:
+            print(f"[fdisim] No se inició la corrida: {exc}", file=sys.stderr)
+            return 1
+        print(f"[fdisim] Corrida offline guardada en {run_dir}")
+        _print_summary(run_dir)
         return 0
 
-    from fdisim.common.config import ConfigError
     from fdisim.orchestration.runtime import PortInUseError, run_scenario_network
 
     try:
@@ -45,6 +57,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             duration_s=args.duracion,
             time_scale=args.escala,
             progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
+            open_browser=not args.no_abrir,
         )
     except KeyboardInterrupt:
         print("[fdisim] Corrida interrumpida; los datos parciales quedaron guardados.")
@@ -68,10 +81,63 @@ def _print_summary(run_dir: Path) -> None:
         )
     for tag, item in summary.get("completeness", {}).items():
         print(f"Completitud {tag}: {item['received']}/{item['expected']} ({item['pct']:.2f} %)")
+    if summary.get("mode") == "offline":
+        sim = summary["simulation"]
+        print(f"Simulación: {sim['steps']} pasos a {sim['speedup']:.0f}× el tiempo real")
+    for effect in summary.get("attack_effects", []):
+        detail = {
+            "bias": lambda e: f"diferencia mediana {e.get('median_diff', float('nan')):+.3f}",
+            "ramp": lambda e: (
+                f"pendiente {e.get('slope', float('nan')):.4f}/s, R² {e.get('r2', 0):.4f}"
+            ),
+            "replay": lambda e: f"{100 * e.get('replayed_fraction', 0):.1f} % repetido",
+        }[effect["type"]](effect)
+        print(
+            f"Ataque {effect['attack_id']} ({effect['type']} sobre {effect['tag']}, "
+            f"[{effect['t_start']:.0f}, {effect['t_end']:.0f}) s): {detail}"
+        )
     for name, ok in summary.get("criteria", {}).items():
         mark = "--" if ok is None else ("OK" if ok else "NO")
         note = " (no aplica en esta corrida)" if ok is None else ""
         print(f"  [{mark}] {name}{note}")
+
+
+def _cmd_dataset(args: argparse.Namespace) -> int:
+    from fdisim.data.dataset import generate_datasets
+
+    attacks = (
+        [Path(p) for p in args.ataques]
+        if args.ataques
+        else sorted(
+            p
+            for p in paths.SCENARIOS_DIR.glob("*.yaml")
+            if p.stem not in ("normal", "escalon_consigna")
+        )
+    )
+    manifest = generate_datasets(
+        Path(args.out),
+        config_path=Path(args.config),
+        normal_scenario=Path(args.normal),
+        attack_scenarios=attacks,
+        n_train=args.entrenamiento,
+        n_val=args.validacion,
+        n_test_normal=args.prueba,
+        n_per_attack=args.por_ataque,
+        base_seed=args.semilla,
+        duration_s=args.duracion,
+        integrator=args.integrador,
+        progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
+    )
+    import json
+
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    for split, info in data["splits"].items():
+        print(
+            f"  {split:<5} {info['runs']:>3} corridas, {info['rows']:>7} filas, "
+            f"{info['attack_rows']:>6} bajo ataque"
+        )
+    print(f"Dataset guardado en {manifest.parent} (manifiesto: {manifest.name})")
+    return 0
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
@@ -150,6 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--ui", action="store_true", help="abrir la HMI durante la corrida")
     p.add_argument(
+        "--no-abrir", action="store_true", help="con --ui: no abrir el navegador automáticamente"
+    )
+    p.add_argument(
         "--duracion",
         type=float,
         default=None,
@@ -158,6 +227,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--escala", type=float, default=None, help="factor de tiempo (1 = tiempo real, 5 = 5×)"
     )
+    p.add_argument(
+        "--integrador", choices=["solve_ivp", "rk4"], default=None, help="solo en modo offline"
+    )
+
+    p = add(
+        "dataset",
+        "Genera por lotes los datasets de entrenamiento, validación y prueba",
+        _cmd_dataset,
+    )
+    p.add_argument("--out", default=str(paths.PROCESSED_DIR / "v1"), help="carpeta de salida")
+    p.add_argument("--normal", default=str(paths.SCENARIOS_DIR / "normal.yaml"))
+    p.add_argument(
+        "--ataques",
+        nargs="*",
+        default=None,
+        help="escenarios con ataque (por defecto, todos los del catálogo)",
+    )
+    p.add_argument("--entrenamiento", type=int, default=10, help="corridas normales")
+    p.add_argument("--validacion", type=int, default=3, help="corridas normales")
+    p.add_argument("--prueba", type=int, default=3, help="corridas normales en prueba")
+    p.add_argument("--por-ataque", type=int, default=2, help="corridas por escenario de ataque")
+    p.add_argument("--semilla", type=int, default=1000, help="semilla base")
+    p.add_argument("--duracion", type=float, default=None)
+    p.add_argument("--integrador", choices=["solve_ivp", "rk4"], default=None)
 
     p = add("train", "Construye el modelo causal con datos de operación normal", _cmd_train)
     p.add_argument("--data", required=True)

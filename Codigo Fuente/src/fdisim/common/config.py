@@ -90,7 +90,8 @@ def _resolve_scenario(path: Path, seen: tuple[Path, ...] = ()) -> dict[str, Any]
     return merged
 
 
-def _parse_attack(item: Mapping[str, Any], i: int) -> AttackSpec:
+def parse_attack(item: Mapping[str, Any], i: int = 0) -> AttackSpec:
+    """Convierte un ataque del YAML (o de la HMI) en ``AttackSpec`` validado (RF-20)."""
     where = f"attacks[{i}]"
     try:
         kind = AttackType(item["type"])
@@ -132,7 +133,7 @@ def load_scenario(path: str | Path) -> ScenarioConfig:
         setpoints = tuple((float(s["t_s"]), float(s["value_cm"])) for s in profile)
     except KeyError as exc:
         raise ConfigError(f"{p.name}.setpoint_profile.{exc.args[0]}: campo obligatorio") from None
-    attacks = tuple(_parse_attack(a, i) for i, a in enumerate(data.get("attacks") or []))
+    attacks = tuple(parse_attack(a, i) for i, a in enumerate(data.get("attacks") or []))
     return ScenarioConfig(
         name=str(data.get("name", p.stem)),
         description=str(data.get("description", "")),

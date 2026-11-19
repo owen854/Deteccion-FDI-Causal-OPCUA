@@ -67,9 +67,11 @@ class Launcher:
         log_dir: str | Path | None = None,
         hub: ExperimentHub | None = None,
         logger: logging.Logger | None = None,
+        open_browser: bool = True,
     ) -> None:
         from fdisim.common.config import load_config, load_scenario
 
+        self.open_browser = open_browser
         self.run_id = run_id
         self.config_path = config_path
         self.scenario_path = scenario_path
@@ -86,7 +88,12 @@ class Launcher:
         self._ui: subprocess.Popen | None = None
 
     # ------------------------------------------------------------------ arranque
-    def start_all(self, with_ui: bool = False, ready_timeout_s: float = 60.0) -> None:
+    def start_all(
+        self,
+        with_ui: bool = False,
+        ready_timeout_s: float = 60.0,
+        ui_env: dict[str, str] | None = None,
+    ) -> None:
         ctx = multiprocessing.get_context("spawn")
         for component in START_ORDER:
             spec = ComponentSpec(
@@ -109,10 +116,15 @@ class Launcher:
             self._wait_ready(component, ready_timeout_s)
             self.logger.info("%s listo (pid %s)", component.value, process.pid)
         if with_ui:
-            self.start_ui()
+            self.start_ui(ui_env)
 
-    def start_ui(self) -> None:
-        """Lanza la HMI web como subproceso, con la configuración efectiva de la corrida."""
+    def start_ui(self, env: dict[str, str] | None = None) -> None:
+        """Lanza la HMI web como subproceso, con la configuración efectiva de la corrida.
+
+        ``env`` lleva la dirección y la clave del canal de experimento (ataques interactivos).
+        """
+        import os
+
         config_file = self.run_dir / "config.yaml"
         cmd = [
             sys.executable,
@@ -124,7 +136,9 @@ class Launcher:
             "--run-id",
             self.run_id,
         ]
-        self._ui = subprocess.Popen(cmd, cwd=paths.PROJECT_ROOT)
+        if not self.open_browser:
+            cmd.append("--no-abrir")
+        self._ui = subprocess.Popen(cmd, cwd=paths.PROJECT_ROOT, env={**os.environ, **(env or {})})
         self.logger.info("HMI lanzada (pid %s)", self._ui.pid)
 
     def _wait_ready(self, component: Component, timeout_s: float) -> None:

@@ -24,7 +24,7 @@ from typing import Any
 from fdisim.common.types import Alarm, AttackEvent, GroundTruthRecord, Sample
 
 TABLES = ("samples", "ground_truth", "attacks", "detections", "alarms")
-_STRING_COLUMNS = {"tag", "status", "attack_id"}
+_STRING_COLUMNS = {"tag", "status", "attack_id", "type", "targets", "params"}
 _BOOL_COLUMNS = {"attack_active"}
 
 
@@ -78,7 +78,20 @@ class Historian:
         self._append("ground_truth", row)
 
     def record_attack(self, event: AttackEvent) -> None:
-        raise NotImplementedError("Fase 4 — RF-25")
+        """Intervalo de ataque (tabla ``attacks``); se guarda tal como llega (inicio o fin)."""
+        import json
+
+        self._append(
+            "attacks",
+            {
+                "attack_id": event.attack_id,
+                "type": event.type.value,
+                "targets": ",".join(event.targets),
+                "t_start": float(event.t_start),
+                "t_end": float(event.t_end) if event.t_end is not None else float("nan"),
+                "params": json.dumps(dict(event.params), sort_keys=True),
+            },
+        )
 
     def record_detection(self, t: float, detector: str, scores: dict[str, float]) -> None:
         raise NotImplementedError("Fase 6 — RF-25")

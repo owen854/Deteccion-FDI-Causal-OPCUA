@@ -1,0 +1,23 @@
+# Ataque coordinado sobre los dos niveles (RF-24, extendido).
+# Sesgos simultáneos en LT-101 y LT-102: cada variable por separado parece plausible; solo
+# la relación entre ellas y con el caudal delata el ataque.
+name: coordinado_lt101_lt102
+description: Sesgos simultáneos de +1,0 cm en LT-101 y +2,0 cm en LT-102.
+base: normal.yaml
+seed: 31
+
+attacks:
+  - id: A1
+    type: bias
+    targets: [LT-102]
+    start_s: 900
+    duration_s: 300
+    params: { bias: 2.0 }
+    stealth: { enabled: true, envelope: [2.0, 45.0], max_rate_per_s: 0.5 }
+  - id: A2
+    type: bias
+    targets: [LT-101]
+    start_s: 900
+    duration_s: 300
+    params: { bias: 1.0 }
+    stealth: { enabled: true, envelope: [2.0, 45.0], max_rate_per_s: 0.5 }

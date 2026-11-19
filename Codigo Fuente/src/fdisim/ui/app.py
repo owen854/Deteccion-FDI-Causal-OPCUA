@@ -13,7 +13,8 @@ La HMI es un cliente OPC UA del gateway (``ui.link``). Se inicia sola con ``fdis
 conecta a la co-simulación que esté corriendo y espera si no hay ninguna) o junto con una corrida
 con ``fdisim run --ui``.
 
-Fase 3: HMI v0 con la página de operación. Las demás páginas llegan en la Fase 7.
+Fase 3: HMI v0 con la página de operación. Fase 4: página de experimentos con ataques
+interactivos. Las demás páginas llegan en la Fase 7.
 Dependencia: NiceGUI.
 """
 
@@ -29,7 +30,7 @@ PAGES: dict[str, str] = {
     "/resultados": "fdisim.ui.pages.results",
     "/comunicacion": "fdisim.ui.pages.communication",
 }
-IMPLEMENTED_PAGES = ("/",)
+IMPLEMENTED_PAGES = ("/", "/experimentos")
 
 
 def run_ui(
@@ -44,9 +45,10 @@ def run_ui(
     from nicegui import app, ui
 
     from fdisim.common.config import load_config
+    from fdisim.common.experiment_channel import ExperimentClient
     from fdisim.common.logging_setup import configure_logging
     from fdisim.ui.link import HmiLink
-    from fdisim.ui.pages import operation
+    from fdisim.ui.pages import experiments, operation
     from fdisim.ui.state import UiState
 
     config = load_config(config_path).to_dict()
@@ -62,6 +64,8 @@ def run_ui(
     app.on_startup(link.start)
     app.on_shutdown(link.stop)
     operation.register(state, link, config)
+    # Canal con el orquestador para los ataques interactivos (solo con «fdisim run --ui»).
+    experiments.register(state, link, ExperimentClient.from_environment())
     ui.run(
         host=host or str(ui_cfg.get("host", "127.0.0.1")),
         port=int(port or ui_cfg.get("port", 8080)),

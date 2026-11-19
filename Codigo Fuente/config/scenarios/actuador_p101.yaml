@@ -1,0 +1,17 @@
+# Ataque sobre la señal de actuación (RF-24, extendido).
+# El gateway altera en camino a la planta la orden P-101 que escribe el controlador y sigue
+# mostrando a los clientes la orden original. El controlador compensa por realimentación, pero
+# el caudal FT-101 deja de corresponder a la orden que se ve: inconsistencia causal P-101 → FT-101.
+name: actuador_p101
+description: Sesgo de +8 % sobre la orden de la bomba P-101, oculto a los clientes.
+base: normal.yaml
+seed: 32
+
+attacks:
+  - id: A1
+    type: bias
+    targets: [P-101]
+    start_s: 900
+    duration_s: 300
+    params: { bias: 8.0 }
+    stealth: { enabled: true, envelope: [0.0, 100.0], max_rate_per_s: 2.0 }
