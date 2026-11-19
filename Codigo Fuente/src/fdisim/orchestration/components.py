@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fdisim.common.bus import CommandType, EventType, ExperimentBus
+from fdisim.common.bus import Command, CommandType, EventType, ExperimentBus
 from fdisim.common.logging_setup import configure_logging
 from fdisim.opcua.factory import endpoint_url
 from fdisim.opcua.security import SecurityConfig
@@ -98,8 +98,11 @@ def component_main(spec: ComponentSpec, events: Any, commands: Mapping[str, Any]
 class _Commands:
     """Atiende la cola de comandos del componente desde el bucle asyncio."""
 
-    def __init__(self, bus: ExperimentBus) -> None:
+    def __init__(
+        self, bus: ExperimentBus, on_command: Callable[[Command], None] | None = None
+    ) -> None:
         self.bus = bus
+        self.on_command = on_command
         self.start = asyncio.Event()
         self.stop = asyncio.Event()
         self._task = asyncio.create_task(self._poll())
@@ -115,6 +118,11 @@ class _Commands:
                     self.start.set()
                 elif command.type is CommandType.STOP:
                     self.stop.set()
+                elif self.on_command is not None:
+                    try:
+                        self.on_command(command)
+                    except Exception:
+                        logging.getLogger("fdisim").exception("Comando %s rechazado", command.type)
             await asyncio.sleep(0.05)
 
     async def first_of_start_or_stop(self) -> None:
@@ -173,11 +181,18 @@ async def _run_plant(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Lo
 
 
 async def _run_gateway(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Logger) -> None:
+    from fdisim.attacks.injector import FdiInjector
+    from fdisim.attacks.scheduler import AttackScheduler
+    from fdisim.common.config import load_scenario
     from fdisim.opcua.client_base import OpcUaClient
     from fdisim.opcua.gateway import COMPONENT, AggregatingGateway
 
     cfg = spec.config
     security = security_of(cfg)
+    scenario = load_scenario(spec.scenario_path)
+    # El gateway comprometido lleva siempre el inyector: transparente mientras no haya ataques
+    # activos, listo para los del escenario y para los que se armen en caliente (RF-23).
+    injector = FdiInjector(AttackScheduler(list(scenario.attacks)), bus)
     upstream = OpcUaClient(
         plant_endpoint(cfg),
         security,
@@ -189,14 +204,31 @@ async def _run_gateway(spec: ComponentSpec, bus: ExperimentBus, logger: logging.
     gateway = AggregatingGateway(
         gateway_endpoint(cfg),
         upstream,
-        None,
+        injector,
         security,
         bus,
         gateway_publishing_interval(cfg),
         logger,
+        time_scale=float(cfg["simulation"]["time_scale"]),
     )
     await gateway.start()
-    commands = _Commands(bus)
+    if scenario.attacks:
+        logger.warning(
+            "Ataques programados: %s",
+            "; ".join(
+                f"{a.attack_id} {a.type.value} sobre {','.join(a.targets)} en "
+                f"[{a.start_s:.0f}, {a.end_s:.0f}) s"
+                for a in scenario.attacks
+            ),
+        )
+
+    def on_command(command: Command) -> None:
+        if command.type is CommandType.ARM_ATTACK:
+            gateway.arm_attack(command.payload["spec"], bool(command.payload.get("start_now")))
+        elif command.type is CommandType.DISARM_ATTACK:
+            gateway.disarm_attack(str(command.payload["attack_id"]))
+
+    commands = _Commands(bus, on_command)
     bus.publish(EventType.READY)
     try:
         await gateway.relay_forever(commands.stop)

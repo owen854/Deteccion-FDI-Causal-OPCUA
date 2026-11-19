@@ -65,7 +65,9 @@ class Plant:
 
     @property
     def sim_time(self) -> float:
-        return self._k * self.dt_s
+        # Redondeado: k·Δt en coma flotante puede dar 0,30000000000000004; todos los componentes
+        # usan el mismo valor canónico para que las ventanas de ataque coincidan exactamente.
+        return round(self._k * self.dt_s, 6)
 
     @property
     def levels(self) -> tuple[float, float]:
