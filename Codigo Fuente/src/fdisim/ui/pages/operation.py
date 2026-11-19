@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from fdisim.common.types import FT_101, LT_101, LT_102, P_101, SP_102
-from fdisim.opcua.plant_server import SIM_RUNNING, SIM_TIME
+from fdisim.ui.components.header import page_header
 from fdisim.ui.components.tank_synoptic import tank_synoptic
 from fdisim.ui.components.trend_chart import trend_chart
 from fdisim.ui.link import HmiLink
@@ -27,18 +27,12 @@ def register(
     if link is None:
         raise ValueError("La página de operación necesita el enlace OPC UA de la HMI")
     refresh_hz = float((config or {}).get("ui", {}).get("refresh_hz", 4))
-    security = link.security
 
     @ui.page("/")
     def page() -> None:
         ui.page_title("FDISim-OPCUA · Operación")
         ui.query("body").style("background-color: #f1f5f9")
-        with ui.header().classes("items-center justify-between bg-slate-800"):
-            ui.label("FDISim-OPCUA · Operación").classes("text-lg font-bold")
-            with ui.row().classes("items-center gap-4"):
-                status = ui.label()
-                sim = ui.label()
-                ui.label(f"{security.mode.value} · {security.policy}").classes("text-sm opacity-80")
+        refresh_header = page_header("Operación", state, link)
 
         with ui.row().classes("w-full no-wrap gap-4 items-stretch"):
             with ui.card().classes("w-3/5"):
@@ -76,14 +70,7 @@ def register(
                 refresh_flow = trend_chart(state, [FT_101], "Caudal de entrada", y_name="cm³/s")
 
         def refresh_fast() -> None:
-            connected = link.connected
-            status.text = "● Conectado al gateway" if connected else "● Sin conexión"
-            status.classes(replace="text-green-400" if connected else "text-red-400")
-            t = state.value(SIM_TIME)
-            running = state.value(SIM_RUNNING, 0.0) > 0.5
-            sim.text = (f"t = {t:.1f} s · " if math.isfinite(t) else "") + (
-                "En ejecución" if running else "Detenida"
-            )
+            refresh_header()
             sp = state.value(SP_102)
             current.text = (
                 f"Consigna actual: {sp:.2f} cm" if math.isfinite(sp) else "Consigna actual: —"
