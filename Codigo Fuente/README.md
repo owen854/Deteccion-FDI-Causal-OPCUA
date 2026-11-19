@@ -3,10 +3,11 @@
 Marco de simulación para la **detección de inyección de datos falsos (FDI) en redes OPC UA mediante análisis causal**.
 Proyecto del semillero SIDDFAI (grupo A&C), Universidad de Pamplona.
 
-> **Estado: Fases 0, 1 y 2 completadas.**
+> **Estado: Fases 0 a 3 completadas.**
 > - **Fase 0:** arquitectura, contratos de datos, interfaces, configuración y pruebas de aceptación.
-> - **Fase 1:** seguridad OPC UA (PKI por componente, listas de confianza, usuarios, políticas Basic256Sha256 / Aes128_Sha256_RsaOaep / Aes256_Sha256_RsaPss), modelo de información real y pruebas de concepto, con el cifrado verificado en Wireshark.
+> - **Fase 1:** seguridad OPC UA (PKI por componente, listas de confianza, usuarios, políticas Basic256Sha256 / Aes128_Sha256_RsaOaep / Aes256_Sha256_RsaPss), modelo de información real y pruebas de concepto, con el cifrado verificado en Wireshark y la interoperabilidad con UaExpert.
 > - **Fase 2:** modelo de dos tanques (SciPy y RK4), sensores, bomba, perturbaciones legítimas, PI sintonizado y lazo cerrado offline.
+> - **Fase 3:** co-simulación en red. Planta, gateway transparente, controlador y monitor corren como procesos OPC UA cifrados, con reloj de co-simulación, plano de experimento, historiador, corridas con manifiesto, reconexión automática, validación de la configuración, bitácoras por componente y HMI v0.
 >
 > Las funciones de fases posteriores lanzan `NotImplementedError` con la fase y el requerimiento que las implementa (p. ej. `"Fase 4 — RF-17: ataque de sesgo"`).
 
@@ -41,7 +42,8 @@ Codigo Fuente/
 ├── certs/                  certificados X.509 locales (no versionados)
 ├── data/                   raw/ · processed/ · models/ (no versionados)
 ├── results/  logs/         reportes, figuras y bitácoras
-├── docs/                   arquitectura, modelo de información, guías de verificación y experimentos
+├── docs/                   arquitectura, modelo de información, guías de verificación,
+│                           co-simulación y experimentos; evidencias/
 ├── notebooks/              análisis exploratorio
 ├── scripts/                verificar_entorno · generar_certificados · poc_opcua_segura
 │                           verificar_cifrado · calibrar_lazo
@@ -56,8 +58,9 @@ Codigo Fuente/
 │   ├── causal/       M6    grafo físico, PCMCI/Granger, comparación, SCM
 │   ├── detection/    M7-8  residuos, CUSUM/EWMA, estructura, identificación, umbrales
 │   ├── evaluation/   M9    métricas, latencias, campañas, estadística, reportes
-│   ├── orchestration/M11   lanzador, ejecución en red y offline
-│   └── ui/           M10   HMI NiceGUI: páginas y componentes
+│   ├── orchestration/M11   lanzador, componentes por proceso, ejecución en red y offline,
+│   │                       resumen de corridas
+│   └── ui/           M10   HMI NiceGUI: enlace OPC UA, páginas y componentes
 └── tests/                  test_estructura.py · unit/ · integration/
 ```
 
@@ -110,12 +113,20 @@ Se instalan aparte, fuera de Python:
 pytest
 ```
 
-Resultado esperado tras la Fase 2: 128 pruebas superadas y 15 `xfailed`. Las `xfailed` son pruebas de aceptación de fases futuras, marcadas con `pending(...)`. Las pruebas de integración levantan servidores OPC UA reales en localhost y se omiten si `asyncua` no está instalado. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
+Resultado esperado tras la Fase 3: 170 pruebas superadas y 13 `xfailed`, en unos 90 s.
 
-Cobertura (RNF-17). Mídala sobre las pruebas unitarias; con las de integración, la medición se cuelga por los hilos de asyncua:
+- Las `xfailed` son pruebas de aceptación de fases futuras, marcadas con `pending(...)`. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
+- Las pruebas de integración levantan servidores OPC UA reales en localhost, con una PKI temporal y puertos libres, y se omiten si `asyncua` no está instalado. Incluyen una corrida corta con los cuatro procesos.
+- Para correr solo las unitarias:
 
 ```bash
-pytest -m "not integration" --cov=fdisim
+pytest -m "not integration"
+```
+
+Cobertura (RNF-17): 85 % del paquete con todas las pruebas. `pyproject.toml` configura coverage con el motor `sysmon` (Python ≥ 3.12), porque el motor por defecto se cuelga con las pruebas de asyncua.
+
+```bash
+pytest --cov=fdisim
 ```
 
 ## Fase 1: seguridad OPC UA
@@ -146,18 +157,34 @@ python scripts/calibrar_lazo.py
 
 El primero verifica RF-07 en un escalón nominal 25 → 30 cm: sobrepaso ≈ 6 %, error estacionario < 0,1 %. El segundo simula el escenario `normal`, con consignas y perturbaciones legítimas. `--barrido` repite la sintonía de Kp, Ki y Kd. Las figuras y los resúmenes quedan en `results/fase2/`.
 
-## Uso previsto
+## Fase 3: co-simulación en red
 
 ```bash
-fdisim run --scenario config/scenarios/sesgo_lt102.yaml --mode network --ui
+fdisim certs
 ```
 
 ```bash
-fdisim campaign --campaign config/campaigns/campana_oe4.yaml
+fdisim run --scenario config/scenarios/normal.yaml
+```
+
+```bash
+fdisim run --scenario config/scenarios/normal.yaml --duracion 120 --escala 2 --ui
 ```
 
 ```bash
 fdisim ui
+```
+
+`fdisim run` lanza los cuatro procesos OPC UA y corre el escenario. Al terminar, guarda la corrida en `data/raw/<run_id>/` (muestras, verdad de terreno, configuración, resumen y manifiesto con SHA-256) y las bitácoras en `logs/<run_id>/`, e imprime los criterios de aceptación. `fdisim ui` abre la HMI en `http://127.0.0.1:8080` conectada al gateway. El procedimiento completo y la verificación con UaExpert están en [docs/guia_cosimulacion.md](docs/guia_cosimulacion.md).
+
+## Uso previsto (fases siguientes)
+
+```bash
+fdisim run --scenario config/scenarios/sesgo_lt102.yaml --ui
+```
+
+```bash
+fdisim campaign --campaign config/campaigns/campana_oe4.yaml
 ```
 
 ## Mapa de módulos, requerimientos y fases
