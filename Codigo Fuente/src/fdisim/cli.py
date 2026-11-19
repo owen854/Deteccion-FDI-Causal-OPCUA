@@ -141,7 +141,36 @@ def _cmd_dataset(args: argparse.Namespace) -> int:
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
-    raise NotImplementedError("Fase 5 — RF-28..RF-32: construcción del modelo causal")
+    import json
+
+    from fdisim.causal.training import train_causal_model
+
+    data = Path(args.data)
+    if not data.is_file():
+        print(
+            f"[fdisim] No existe el dataset {data}. Genérelo con: fdisim dataset", file=sys.stderr
+        )
+        return 1
+    manifest = train_causal_model(
+        data,
+        Path(args.out),
+        val_path=Path(args.val) if args.val else None,
+        config_path=Path(args.config),
+        tau_max=args.tau_max,
+        alpha=args.alpha,
+        coarse_block=args.bloque,
+        with_sensitivity=not args.sin_sensibilidad,
+        progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
+    )
+    info = json.loads(manifest.read_text(encoding="utf-8"))
+    rmse = info["validation_rmse"]
+    for tag, value in rmse["physics_informed"].items():
+        limit = rmse["limit_2sigma"].get(tag)
+        print(f"  RMSE {tag}: {value:.4f}" + (f" (límite {limit:.2f})" if limit else ""))
+    for name, ok in info["criteria"].items():
+        print(f"  [{'OK' if ok else 'NO'}] {name}")
+    print(f"Reporte: {manifest.parent / 'report.md'}")
+    return 0
 
 
 def _cmd_detect(args: argparse.Namespace) -> int:
@@ -253,8 +282,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--integrador", choices=["solve_ivp", "rk4"], default=None)
 
     p = add("train", "Construye el modelo causal con datos de operación normal", _cmd_train)
-    p.add_argument("--data", required=True)
+    p.add_argument("--data", required=True, help="train.parquet del dataset")
+    p.add_argument("--val", default=None, help="por defecto, val.parquet junto a --data")
     p.add_argument("--out", default=str(paths.MODELS_DIR / "causal_v1"))
+    p.add_argument("--tau-max", type=int, default=3, help="retardo máximo del descubrimiento")
+    p.add_argument("--alpha", type=float, default=0.01, help="nivel de significancia")
+    p.add_argument(
+        "--bloque", type=int, default=10, help="muestras por bloque en la resolución agregada"
+    )
+    p.add_argument(
+        "--sin-sensibilidad", action="store_true", help="omitir el análisis de sensibilidad"
+    )
 
     p = add("detect", "Reprocesa una corrida guardada con los detectores", _cmd_detect)
     p.add_argument("--run", required=True)
