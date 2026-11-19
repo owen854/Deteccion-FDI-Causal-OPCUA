@@ -85,6 +85,15 @@ sequenceDiagram
 - **Arranque y parada.** El orquestador lanza cada componente con `multiprocessing` (contexto *spawn*), espera su READY y da la orden de inicio a la planta. Al terminar, deja un margen para los datos en tránsito y detiene en orden inverso. Ctrl+C lo atiende solo el orquestador, para que cada componente guarde sus datos.
 - **HMI como subproceso.** NiceGUI no puede ejecutarse dentro de un proceso hijo de `multiprocessing`, por eso la HMI se lanza como `python -m fdisim ui`.
 
+## Decisiones de implementación del motor FDI (Fase 4)
+
+- **El inyector vive en el gateway comprometido.** Las mediciones se falsifican en el camino planta → clientes y las órdenes (P-101, consigna) en el camino clientes → planta. Durante un ataque a una orden, el gateway muestra a los clientes lo que escribieron, así que la manipulación del actuador no se ve en P-101: solo en sus efectos físicos (FT-101, niveles).
+- **El sigilo limita la desviación, no el valor publicado.** δ = yₐ − y cambia como máximo ρ·Δt por paso y vuelve a cero dentro de la ventana. La señal falsa conserva el ruido del sensor y no tiene escalones al entrar ni al salir.
+- **Tiempo simulado canónico.** La planta publica round(k·Δt, 6) y el gateway deduce el tiempo de cada muestra a partir de su SourceTimestamp (redondeado al milisegundo), tomando como referencia el último SIM.TIME del reloj. Así inyector, verdad de terreno y etiquetas coinciden exactamente en los bordes de las ventanas.
+- **Las etiquetas salen de los intervalos ejecutados.** El gateway publica un `AttackEvent` al inicio y al fin de cada ataque, y el orquestador etiqueta muestras y verdad de terreno al cerrar la corrida.
+- **El mismo motor offline.** `simulate_offline` reproduce la cadena del modo en red con la misma clase `FdiInjector`, sin reloj de pared: es determinista y genera los datasets reproducibles.
+- **Ataques interactivos fuera del plano de datos.** La HMI pide armar o desarmar ataques al orquestador por un canal local autenticado (`common/experiment_channel.py`), y este los reenvía al gateway por el plano de experimento. Nada del experimento viaja por OPC UA.
+
 ## Contratos de datos
 
 Definidos en `src/fdisim/common/types.py`: `Sample`, `GroundTruthRecord`, `AttackSpec`, `StealthSpec`, `AttackEvent`, `Alarm`, `RunManifest`. Son la interfaz estable entre módulos; cambiarlos exige acuerdo del equipo y actualizar las pruebas. En la Fase 3, `GroundTruthRecord` ganó el campo opcional `source_ts` (compatible con lo anterior), que permite unir cada paso con sus muestras OPC UA.

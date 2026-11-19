@@ -3,11 +3,12 @@
 Marco de simulación para la **detección de inyección de datos falsos (FDI) en redes OPC UA mediante análisis causal**.
 Proyecto del semillero SIDDFAI (grupo A&C), Universidad de Pamplona.
 
-> **Estado: Fases 0 a 3 completadas.**
+> **Estado: Fases 0 a 4 completadas.**
 > - **Fase 0:** arquitectura, contratos de datos, interfaces, configuración y pruebas de aceptación.
 > - **Fase 1:** seguridad OPC UA (PKI por componente, listas de confianza, usuarios, políticas Basic256Sha256 / Aes128_Sha256_RsaOaep / Aes256_Sha256_RsaPss), modelo de información real y pruebas de concepto, con el cifrado verificado en Wireshark y la interoperabilidad con UaExpert.
 > - **Fase 2:** modelo de dos tanques (SciPy y RK4), sensores, bomba, perturbaciones legítimas, PI sintonizado y lazo cerrado offline.
 > - **Fase 3:** co-simulación en red. Planta, gateway transparente, controlador y monitor corren como procesos OPC UA cifrados, con reloj de co-simulación, plano de experimento, historiador, corridas con manifiesto, reconexión automática, validación de la configuración, bitácoras por componente y HMI v0.
+> - **Fase 4:** motor de inyección FDI en el gateway comprometido (sesgo, rampa y replay, con sigilo, ataques coordinados y sobre el actuador), etiquetado automático, el mismo motor en modo offline, catálogo de 9 escenarios, datasets v1 reproducibles y ataques interactivos desde la HMI.
 >
 > Las funciones de fases posteriores lanzan `NotImplementedError` con la fase y el requerimiento que las implementa (p. ej. `"Fase 4 — RF-17: ataque de sesgo"`).
 
@@ -49,12 +50,13 @@ Codigo Fuente/
 │                           verificar_cifrado · calibrar_lazo
 ├── src/fdisim/
 │   ├── cli.py              comandos: run · train · detect · campaign · report · ui · certs
-│   ├── common/             contratos de datos (types), config, reloj, plano de experimento
+│   ├── common/             contratos de datos (types), config, reloj, plano de experimento,
+│   │                       canal HMI ↔ orquestador
 │   ├── process/      M1    modelo de dos tanques, sensores, bomba, perturbaciones
 │   ├── control/      M2    PID discreto, consigna, indicadores de desempeño, soft-PLC
 │   ├── opcua/        M3    modelo de información, seguridad, fábrica, servidor, gateway
 │   ├── attacks/      M4    sesgo, rampa, replay, sigilo, programador, inyector
-│   ├── data/         M5    historiador, almacenamiento con manifiesto, datasets
+│   ├── data/         M5    historiador, almacenamiento con manifiesto, etiquetas, datasets
 │   ├── causal/       M6    grafo físico, PCMCI/Granger, comparación, SCM
 │   ├── detection/    M7-8  residuos, CUSUM/EWMA, estructura, identificación, umbrales
 │   ├── evaluation/   M9    métricas, latencias, campañas, estadística, reportes
@@ -113,7 +115,7 @@ Se instalan aparte, fuera de Python:
 pytest
 ```
 
-Resultado esperado tras la Fase 3: 170 pruebas superadas y 13 `xfailed`, en unos 90 s.
+Resultado esperado tras la Fase 4: 194 pruebas superadas y 10 `xfailed`, en unos 2 min.
 
 - Las `xfailed` son pruebas de aceptación de fases futuras, marcadas con `pending(...)`. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
 - Las pruebas de integración levantan servidores OPC UA reales en localhost, con una PKI temporal y puertos libres, y se omiten si `asyncua` no está instalado. Incluyen una corrida corta con los cuatro procesos.
@@ -177,10 +179,35 @@ fdisim ui
 
 `fdisim run` lanza los cuatro procesos OPC UA y corre el escenario. Al terminar, guarda la corrida en `data/raw/<run_id>/` (muestras, verdad de terreno, configuración, resumen y manifiesto con SHA-256) y las bitácoras en `logs/<run_id>/`, e imprime los criterios de aceptación. `fdisim ui` abre la HMI en `http://127.0.0.1:8080` conectada al gateway. El procedimiento completo y la verificación con UaExpert están en [docs/guia_cosimulacion.md](docs/guia_cosimulacion.md).
 
+## Fase 4: ataques FDI, escenarios y datasets
+
+```bash
+fdisim run --scenario config/scenarios/sesgo_lt102.yaml --escala 5
+```
+
+```bash
+fdisim run --mode offline --scenario config/scenarios/rampa_lt102.yaml
+```
+
+```bash
+fdisim run --scenario config/scenarios/normal.yaml --escala 2 --ui
+```
+
+```bash
+fdisim dataset --out data/processed/v1
+```
+
+- **Primer comando:** corre un ataque de sesgo en red, inyectado en el gateway comprometido con SignAndEncrypt.
+- **Segundo:** corre el mismo motor de ataques sin red, de forma determinista, a unas 590× el tiempo real.
+- **Tercero:** abre la HMI; en la página **Experimentos** se arman y desarman ataques en caliente.
+- **Cuarto:** genera los datasets etiquetados v1 (entrenamiento, validación y prueba), reproducibles por semilla.
+
+El catálogo tiene 9 escenarios: normal, más sesgo, rampa y replay sobre LT-101 y LT-102, un ataque coordinado y uno sobre el actuador. Cada corrida guarda los intervalos de ataque y una etiqueta por muestra, e imprime el efecto medido de cada ataque. Detalle en [docs/guia_experimentos.md](docs/guia_experimentos.md).
+
 ## Uso previsto (fases siguientes)
 
 ```bash
-fdisim run --scenario config/scenarios/sesgo_lt102.yaml --ui
+fdisim train --data data/processed/v1/train.parquet
 ```
 
 ```bash
