@@ -117,5 +117,5 @@ def test_cli_construye_y_reporta_pendientes(capsys):
     parser = build_parser()
     for command in ("run", "train", "detect", "campaign", "report", "ui", "certs"):
         assert command in parser._subparsers._group_actions[0].choices  # noqa: SLF001
-    assert main(["train", "--data", "x.parquet"]) == 2
-    assert "Fase 5" in capsys.readouterr().err
+    assert main(["detect", "--run", "x"]) == 2
+    assert "Fase 6" in capsys.readouterr().err
