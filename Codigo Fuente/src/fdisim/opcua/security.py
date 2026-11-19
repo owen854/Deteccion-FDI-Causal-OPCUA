@@ -65,6 +65,12 @@ TRUST: Mapping[str, tuple[str, ...]] = {
     "hmi": ("gateway",),
 }
 CLIENT_USERS: tuple[str, ...] = ("gateway", "controller", "monitor", "hmi", "uaexpert")
+# Usuarios que acepta cada servidor (mínimo privilegio): la planta solo atiende al gateway y el
+# gateway a sus clientes; ``uaexpert`` queda habilitado para las pruebas de interoperabilidad.
+SERVER_USERS: Mapping[str, tuple[str, ...]] = {
+    "plant_server": ("gateway", "uaexpert"),
+    "gateway": ("controller", "monitor", "hmi", "uaexpert"),
+}
 CREDENTIALS_FILE = "credenciales.json"
 SUBJECT = {
     "organizationName": "Universidad de Pamplona",
@@ -202,6 +208,44 @@ def create_credentials(
     return path
 
 
+def setup_pki(certs_dir: str | Path, days: int = 365, force: bool = False) -> dict[str, Any]:
+    """Crea lo que falte de la PKI local: certificados, listas de confianza y credenciales.
+
+    Devuelve un resumen con los componentes creados y las listas de confianza resultantes.
+    """
+    created = []
+    for component in COMPONENTS:
+        if pki_paths(component, certs_dir).exists() and not force:
+            continue
+        generate_application_certificate(component, certs_dir, days=days)
+        created.append(component)
+    trust = build_trust_lists(certs_dir)
+    credentials = create_credentials(certs_dir)
+    return {"created": created, "trust": trust, "credentials": credentials}
+
+
+def find_uaexpert_certificate() -> Path | None:
+    """Certificado de aplicación de UaExpert en el perfil del usuario (Windows)."""
+    import os
+
+    appdata = Path(os.environ.get("APPDATA", ""))
+    candidates = sorted(appdata.glob("unifiedautomation/uaexpert/PKI/own/certs/*.der"))
+    return candidates[-1] if candidates else None
+
+
+def trust_certificate(
+    cert: str | Path, certs_dir: str | Path, components: tuple[str, ...], name: str
+) -> list[Path]:
+    """Agrega un certificado externo (p. ej. UaExpert) a la lista de confianza de servidores."""
+    copied = []
+    for component in components:
+        target = pki_paths(component, certs_dir).trusted_dir / f"{name}.der"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(cert, target)
+        copied.append(target)
+    return copied
+
+
 def load_credentials(certs_dir: str | Path) -> dict[str, str]:
     path = paths.resolve(certs_dir) / CREDENTIALS_FILE
     if not path.is_file():
@@ -217,8 +261,12 @@ class PasswordUserManager:
     Compara las contraseñas en tiempo constante.
     """
 
-    def __init__(self, credentials: Mapping[str, str]) -> None:
-        self._credentials = dict(credentials)
+    def __init__(
+        self, credentials: Mapping[str, str], allowed: tuple[str, ...] | None = None
+    ) -> None:
+        self._credentials = {
+            user: pwd for user, pwd in credentials.items() if allowed is None or user in allowed
+        }
 
     def get_user(
         self,
@@ -286,7 +334,9 @@ async def apply_server_security(server: Any, config: SecurityConfig, component: 
 
     if config.user_auth is UserAuth.USERNAME:
         server.set_identity_tokens([ua.UserNameIdentityToken])
-        server.iserver.user_manager = PasswordUserManager(load_credentials(config.certs_dir))
+        server.iserver.user_manager = PasswordUserManager(
+            load_credentials(config.certs_dir), SERVER_USERS.get(component)
+        )
     elif config.user_auth is UserAuth.CERTIFICATE:
         server.set_identity_tokens([ua.X509IdentityToken])
         manager = CertificateUserManager()

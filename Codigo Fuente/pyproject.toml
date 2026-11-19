@@ -72,3 +72,6 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.coverage.run]
 source = ["fdisim"]
 omit = ["src/fdisim/ui/*"]
+# El motor por defecto (ctrace) se cuelga con las pruebas de integración de asyncua;
+# sys.monitoring (Python ≥ 3.12) no tiene ese problema y es más rápido.
+core = "sysmon"

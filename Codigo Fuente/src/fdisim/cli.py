@@ -30,12 +30,48 @@ def _cmd_run(args: argparse.Namespace) -> int:
         from fdisim.orchestration.offline import run_scenario_offline
 
         run_dir = run_scenario_offline(Path(args.scenario), Path(args.config), args.seed)
-    else:
-        from fdisim.orchestration.runtime import run_scenario_network
+        print(f"Corrida guardada en {run_dir}")
+        return 0
 
-        run_dir = run_scenario_network(Path(args.scenario), Path(args.config), args.seed, args.ui)
-    print(f"Corrida guardada en {run_dir}")
+    from fdisim.common.config import ConfigError
+    from fdisim.orchestration.runtime import PortInUseError, run_scenario_network
+
+    try:
+        run_dir = run_scenario_network(
+            Path(args.scenario),
+            Path(args.config),
+            args.seed,
+            args.ui,
+            duration_s=args.duracion,
+            time_scale=args.escala,
+            progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
+        )
+    except KeyboardInterrupt:
+        print("[fdisim] Corrida interrumpida; los datos parciales quedaron guardados.")
+        return 130
+    except (ConfigError, PortInUseError) as exc:
+        print(f"[fdisim] No se inició la corrida: {exc}", file=sys.stderr)
+        return 1
+    _print_summary(run_dir)
     return 0
+
+
+def _print_summary(run_dir: Path) -> None:
+    import json
+
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    lat = summary.get("latency_ms", {}).get("end_to_end", {})
+    if lat.get("n"):
+        print(
+            f"Latencia planta → gateway → monitor: p50 {lat['p50']:.0f} ms, "
+            f"p95 {lat['p95']:.0f} ms, máx {lat['max']:.0f} ms"
+        )
+    for tag, item in summary.get("completeness", {}).items():
+        print(f"Completitud {tag}: {item['received']}/{item['expected']} ({item['pct']:.2f} %)")
+    for name, ok in summary.get("criteria", {}).items():
+        mark = "--" if ok is None else ("OK" if ok else "NO")
+        note = " (no aplica en esta corrida)" if ok is None else ""
+        print(f"  [{mark}] {name}{note}")
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
@@ -64,14 +100,29 @@ def _cmd_report(args: argparse.Namespace) -> int:
 def _cmd_ui(args: argparse.Namespace) -> int:
     from fdisim.ui.app import run_ui
 
-    run_ui(args.host, args.port, args.config)
+    run_ui(args.host, args.port, args.config, run_id=args.run_id, show=not args.no_abrir)
     return 0
 
 
 def _cmd_certs(args: argparse.Namespace) -> int:
-    raise NotImplementedError(
-        "Fase 1/3 — RF-12: generación de certificados (scripts/generar_certificados.py)"
-    )
+    from fdisim.opcua.security import find_uaexpert_certificate, setup_pki, trust_certificate
+
+    result = setup_pki(args.out_dir, days=args.dias, force=args.forzar)
+    print(f"PKI en {paths.resolve(args.out_dir)}")
+    print(f"  Certificados creados: {', '.join(result['created']) or 'ninguno (ya existían)'}")
+    for component, peers in result["trust"].items():
+        print(f"  {component:<13} confía en: {', '.join(peers) or '—'}")
+    print(f"  Credenciales de prueba: {result['credentials']} (no se versiona)")
+    if args.confiar_uaexpert:
+        cert = find_uaexpert_certificate()
+        if cert is None:
+            print("No se encontró el certificado de UaExpert: ábralo una vez y repita el comando.")
+            return 1
+        for target in trust_certificate(
+            cert, args.out_dir, ("plant_server", "gateway"), "uaexpert"
+        ):
+            print(f"  UaExpert agregado a {target}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +149,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=["network", "offline"], default="network")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--ui", action="store_true", help="abrir la HMI durante la corrida")
+    p.add_argument(
+        "--duracion",
+        type=float,
+        default=None,
+        help="segundos simulados (por defecto, el escenario)",
+    )
+    p.add_argument(
+        "--escala", type=float, default=None, help="factor de tiempo (1 = tiempo real, 5 = 5×)"
+    )
 
     p = add("train", "Construye el modelo causal con datos de operación normal", _cmd_train)
     p.add_argument("--data", required=True)
@@ -113,11 +173,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--campaign-dir", required=True)
 
     p = add("ui", "Inicia la HMI web local", _cmd_ui)
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--host", default=None, help="por defecto, ui.host de la configuración")
+    p.add_argument("--port", type=int, default=None, help="por defecto, ui.port")
+    p.add_argument("--run-id", default=None, help="corrida a la que pertenece la bitácora")
+    p.add_argument("--no-abrir", action="store_true", help="no abrir el navegador")
 
     p = add("certs", "Genera certificados X.509 de aplicación para los componentes", _cmd_certs)
     p.add_argument("--out-dir", default=str(paths.CERTS_DIR))
+    p.add_argument("--dias", type=int, default=365, help="validez de los certificados")
+    p.add_argument("--forzar", action="store_true", help="regenerar aunque existan")
+    p.add_argument(
+        "--confiar-uaexpert",
+        action="store_true",
+        help="agregar el certificado de UaExpert a la planta y al gateway",
+    )
 
     return parser
 

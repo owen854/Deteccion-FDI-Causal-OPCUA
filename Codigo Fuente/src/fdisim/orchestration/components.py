@@ -1,0 +1,290 @@
+"""Punto de entrada de cada componente en su propio proceso (RF-54, RF-55).
+
+``component_main`` es la función que ejecuta ``multiprocessing`` (contexto *spawn*) para cada
+componente. Configura la bitácora de la corrida, construye el componente desde la
+configuración efectiva y atiende los comandos del plano de experimento:
+
+- planta: arranca el servidor, publica READY, espera START, corre la duración del escenario y
+  publica FINISHED; sigue sirviendo hasta STOP;
+- gateway, controlador y monitor: conectan, publican READY y trabajan hasta STOP.
+
+Al detenerse, cada componente publica sus estadísticas (STATS). Un fallo se publica como ERROR
+y termina el proceso con código 1.
+
+Implementado en la Fase 3.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import multiprocessing
+import signal
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from fdisim.common.bus import CommandType, EventType, ExperimentBus
+from fdisim.common.logging_setup import configure_logging
+from fdisim.opcua.factory import endpoint_url
+from fdisim.opcua.security import SecurityConfig
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentSpec:
+    """Argumentos (serializables) con los que el orquestador lanza un componente."""
+
+    component: str
+    run_id: str
+    config: dict[str, Any]
+    scenario_path: str
+    seed: int
+    duration_s: float
+    run_dir: str
+    log_dir: str
+
+
+def plant_endpoint(config: Mapping[str, Any]) -> str:
+    opcua = config["opcua"]
+    ps = opcua["plant_server"]
+    return endpoint_url(opcua["host"], int(ps["port"]), ps["path"])
+
+
+def gateway_endpoint(config: Mapping[str, Any]) -> str:
+    opcua = config["opcua"]
+    gw = opcua["gateway"]
+    return endpoint_url(opcua["host"], int(gw["port"]), gw["path"])
+
+
+def security_of(config: Mapping[str, Any]) -> SecurityConfig:
+    return SecurityConfig.from_config(config["opcua"]["security"])
+
+
+def client_options(config: Mapping[str, Any]) -> dict[str, float]:
+    rec = config["opcua"].get("reconnect", {})
+    return {
+        "initial_delay_s": float(rec.get("initial_delay_s", 0.5)),
+        "max_delay_s": float(rec.get("max_delay_s", 5.0)),
+    }
+
+
+def publishing_interval(config: Mapping[str, Any]) -> float:
+    """Intervalo de publicación de las suscripciones de los clientes del gateway [ms]."""
+    return float(config["opcua"].get("subscription", {}).get("publishing_interval_ms", 100))
+
+
+def gateway_publishing_interval(config: Mapping[str, Any]) -> float:
+    """Intervalo del enlace interno gateway ← planta [ms] (por defecto, el de los clientes)."""
+    sub = config["opcua"].get("subscription", {})
+    return float(sub.get("gateway_publishing_interval_ms", publishing_interval(config)))
+
+
+def component_main(spec: ComponentSpec, events: Any, commands: Mapping[str, Any]) -> None:
+    # Ctrl+C lo atiende solo el orquestador, que detiene los componentes en orden y así cada uno
+    # alcanza a guardar sus datos y publicar sus estadísticas.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    level = str(spec.config.get("logging", {}).get("level", "INFO"))
+    logger = configure_logging(spec.component, spec.run_id, level, spec.log_dir)
+    bus = ExperimentBus(spec.component, events, commands)
+    try:
+        asyncio.run(_RUNNERS[spec.component](spec, bus, logger))
+    except Exception as exc:
+        logger.exception("Fallo del componente %s", spec.component)
+        bus.publish(EventType.ERROR, f"{exc.__class__.__name__}: {exc}")
+        raise SystemExit(1) from exc
+
+
+class _Commands:
+    """Atiende la cola de comandos del componente desde el bucle asyncio."""
+
+    def __init__(self, bus: ExperimentBus) -> None:
+        self.bus = bus
+        self.start = asyncio.Event()
+        self.stop = asyncio.Event()
+        self._task = asyncio.create_task(self._poll())
+
+    async def _poll(self) -> None:
+        parent = multiprocessing.parent_process()
+        while not self.stop.is_set():
+            if parent is not None and not parent.is_alive():
+                self.stop.set()  # el orquestador murió: no dejar procesos huérfanos
+                return
+            for command in self.bus.poll_commands():
+                if command.type is CommandType.START:
+                    self.start.set()
+                elif command.type is CommandType.STOP:
+                    self.stop.set()
+            await asyncio.sleep(0.05)
+
+    async def first_of_start_or_stop(self) -> None:
+        waits = [asyncio.create_task(self.start.wait()), asyncio.create_task(self.stop.wait())]
+        _, pending = await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+
+    async def close(self) -> None:
+        self.stop.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+
+
+async def _run_plant(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Logger) -> None:
+    from fdisim.common.clock import CoSimClock
+    from fdisim.common.config import load_scenario
+    from fdisim.control.setpoint import SetpointProfile
+    from fdisim.opcua.plant_server import PlantServer
+    from fdisim.process.disturbances import DisturbanceSchedule
+    from fdisim.process.plant import Plant
+
+    cfg = spec.config
+    sim = cfg["simulation"]
+    scenario = load_scenario(spec.scenario_path)
+    dt = float(sim["dt_s"])
+    plant = Plant.from_config(
+        cfg["plant"],
+        dt,
+        spec.seed,
+        DisturbanceSchedule.from_config(scenario.disturbances),
+        str(sim.get("integrator", "solve_ivp")),
+    )
+    server = PlantServer(
+        plant_endpoint(cfg),
+        plant,
+        CoSimClock(dt, float(sim["time_scale"])),
+        security_of(cfg),
+        bus,
+        SetpointProfile(scenario.setpoint_profile),
+        logger,
+    )
+    await server.start()
+    commands = _Commands(bus)
+    bus.publish(EventType.READY)
+    try:
+        await commands.first_of_start_or_stop()
+        if commands.start.is_set() and not commands.stop.is_set():
+            await server.run(spec.duration_s, commands.stop)
+            bus.publish(EventType.FINISHED, server.stats())
+        await commands.stop.wait()
+    finally:
+        await server.stop()
+        await commands.close()
+    bus.publish(EventType.STATS, server.stats())
+
+
+async def _run_gateway(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Logger) -> None:
+    from fdisim.opcua.client_base import OpcUaClient
+    from fdisim.opcua.gateway import COMPONENT, AggregatingGateway
+
+    cfg = spec.config
+    security = security_of(cfg)
+    upstream = OpcUaClient(
+        plant_endpoint(cfg),
+        security,
+        COMPONENT,
+        "plant_server",
+        logger=logger,
+        **client_options(cfg),
+    )
+    gateway = AggregatingGateway(
+        gateway_endpoint(cfg),
+        upstream,
+        None,
+        security,
+        bus,
+        gateway_publishing_interval(cfg),
+        logger,
+    )
+    await gateway.start()
+    commands = _Commands(bus)
+    bus.publish(EventType.READY)
+    try:
+        await gateway.relay_forever(commands.stop)
+    finally:
+        await gateway.stop()
+        await commands.close()
+    bus.publish(EventType.STATS, gateway.stats())
+
+
+async def _run_controller(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Logger) -> None:
+    from fdisim.control.controller_client import COMPONENT, ControllerClient
+    from fdisim.control.pid import PIDController, PIDParams
+    from fdisim.opcua.client_base import OpcUaClient
+
+    cfg = spec.config
+    control = cfg["control"]
+    client = OpcUaClient(
+        gateway_endpoint(cfg),
+        security_of(cfg),
+        COMPONENT,
+        "gateway",
+        logger=logger,
+        **client_options(cfg),
+    )
+    controller = ControllerClient(
+        gateway_endpoint(cfg),
+        PIDController(PIDParams.from_config(control)),
+        str(control["controlled_tag"]),
+        str(control["manipulated_tag"]),
+        client=client,
+        time_scale=float(cfg["simulation"]["time_scale"]),
+        publishing_interval_ms=publishing_interval(cfg),
+        logger=logger,
+    )
+    await controller.start()
+    commands = _Commands(bus)
+    loop = asyncio.create_task(controller.run())
+    bus.publish(EventType.READY)
+    try:
+        await commands.stop.wait()
+    finally:
+        await controller.stop()
+        await loop
+        await commands.close()
+    bus.publish(EventType.STATS, controller.stats())
+
+
+async def _run_monitor(spec: ComponentSpec, bus: ExperimentBus, logger: logging.Logger) -> None:
+    from pathlib import Path
+
+    from fdisim.data.historian import Historian
+    from fdisim.detection.online_monitor import OnlineMonitor
+    from fdisim.opcua.client_base import OpcUaClient
+
+    cfg = spec.config
+    client = OpcUaClient(
+        gateway_endpoint(cfg),
+        security_of(cfg),
+        "monitor",
+        "gateway",
+        logger=logger,
+        **client_options(cfg),
+    )
+    historian = Historian(Path(spec.run_dir), fmt=str(cfg.get("data", {}).get("format", "parquet")))
+    monitor = OnlineMonitor(
+        client,
+        [],
+        historian,
+        float(cfg.get("detection", {}).get("period_s", 0.5)),
+        publishing_interval_ms=publishing_interval(cfg),
+        logger=logger,
+    )
+    await monitor.start()
+    commands = _Commands(bus)
+    loop = asyncio.create_task(monitor.run())
+    bus.publish(EventType.READY)
+    try:
+        await commands.stop.wait()
+    finally:
+        await monitor.stop()
+        await loop
+        await commands.close()
+    bus.publish(EventType.STATS, monitor.stats())
+
+
+_RUNNERS: dict[str, Callable[[ComponentSpec, ExperimentBus, logging.Logger], Awaitable[None]]] = {
+    "plant_server": _run_plant,
+    "gateway": _run_gateway,
+    "controller": _run_controller,
+    "monitor": _run_monitor,
+}

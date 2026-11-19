@@ -44,9 +44,13 @@ flowchart LR
 | Servidor de planta + planta | `plant_server` | `opc.tcp://127.0.0.1:4840/fdisim/planta` | `opcua.plant_server`, `process` |
 | Gateway agregador + inyector | `gateway` | `opc.tcp://127.0.0.1:4841/fdisim/gateway` | `opcua.gateway`, `attacks` |
 | Controlador PID | `controller` | cliente del gateway | `control` |
-| Monitor + detectores | `monitor` o embebido en la HMI | cliente del gateway | `detection` |
-| HMI | `ui` | `http://127.0.0.1:8080` | `ui` |
+| Monitor + detectores | `monitor` | cliente del gateway | `detection` |
+| HMI | subproceso `python -m fdisim ui` (cliente del gateway) | `http://127.0.0.1:8080` | `ui` |
 | Orquestador | proceso principal (CLI) | — | `orchestration`, `cli` |
+
+Cada servidor solo admite a sus clientes legítimos (certificado en su lista de confianza y usuario
+permitido): la planta, al gateway; el gateway, al controlador, al monitor y a la HMI. El usuario
+`uaexpert` queda habilitado en ambos para las pruebas de interoperabilidad.
 
 ## Secuencia de un paso de co-simulación
 
@@ -58,9 +62,10 @@ sequenceDiagram
     participant GW as Gateway (inyector)
     participant CT as Controlador PID
     participant MO as Monitor/detectores
+    participant OR as Orquestador
     CK->>PL: paso t → t+Δt con u vigente
     PL->>PS: mediciones (LT-101, LT-102, FT-101)
-    PL-->>MO: verdad de terreno (plano de experimento, solo para evaluación)
+    PS-->>OR: verdad de terreno (plano de experimento, solo para evaluación)
     PS->>GW: notificación de suscripción
     GW->>GW: observe() + falsify() si hay ataque activo
     GW->>CT: valores (posiblemente falsos)
@@ -70,9 +75,19 @@ sequenceDiagram
     MO->>MO: residuos causales, CUSUM/EWMA, umbrales base
 ```
 
+## Decisiones de implementación de la co-simulación (Fase 3)
+
+- **SourceTimestamp = instante programado del paso.** El reloj espera hasta instantes absolutos `inicio + k·Δt/escala` y el servidor de planta publica cada medición con ese instante. Así, cada muestra OPC UA se une sin ambigüedad con su registro de verdad de terreno, y las latencias por salto se miden con las marcas de tiempo OPC UA.
+- **Una notificación por paso.** El gateway y el monitor se suscriben con el disparador `StatusValueTimestamp` y cola sin límite: llega cada paso aunque el valor se repita, sin pérdidas entre publicaciones.
+- **Escrituras de los clientes.** El gateway detecta las escrituras sobre P-101 y la consigna con la retrollamada `PostWrite` de asyncua y las reenvía a la planta en orden, conservando su SourceTimestamp. La planta nunca reescribe esos nodos, para no pisar una escritura concurrente.
+- **Consigna.** El servidor de planta aplica los cambios programados en el escenario; un cambio desde la HMI se mantiene hasta el siguiente cambio programado.
+- **Controlador.** Calcula cada `Ts` de tiempo simulado. No calcula mientras la simulación no corre, y sin datos frescos mantiene la última salida y lo registra.
+- **Arranque y parada.** El orquestador lanza cada componente con `multiprocessing` (contexto *spawn*), espera su READY y da la orden de inicio a la planta. Al terminar, deja un margen para los datos en tránsito y detiene en orden inverso. Ctrl+C lo atiende solo el orquestador, para que cada componente guarde sus datos.
+- **HMI como subproceso.** NiceGUI no puede ejecutarse dentro de un proceso hijo de `multiprocessing`, por eso la HMI se lanza como `python -m fdisim ui`.
+
 ## Contratos de datos
 
-Definidos en `src/fdisim/common/types.py`: `Sample`, `GroundTruthRecord`, `AttackSpec`, `StealthSpec`, `AttackEvent`, `Alarm`, `RunManifest`. Son la interfaz estable entre módulos; cambiarlos exige acuerdo del equipo y actualizar las pruebas.
+Definidos en `src/fdisim/common/types.py`: `Sample`, `GroundTruthRecord`, `AttackSpec`, `StealthSpec`, `AttackEvent`, `Alarm`, `RunManifest`. Son la interfaz estable entre módulos; cambiarlos exige acuerdo del equipo y actualizar las pruebas. En la Fase 3, `GroundTruthRecord` ganó el campo opcional `source_ts` (compatible con lo anterior), que permite unir cada paso con sus muestras OPC UA.
 
 ## Decisiones tecnológicas
 
