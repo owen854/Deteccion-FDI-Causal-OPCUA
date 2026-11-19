@@ -48,8 +48,12 @@ opcua:                      # RF-10 a RF-15
     certs_dir: certs
     allow_insecure_debug: false
   subscription:
-    publishing_interval_ms: 100
+    publishing_interval_ms: 100           # clientes del gateway: controlador, monitor y HMI
     sampling_interval_ms: 50
+    # Enlace interno gateway ← planta (troncal del agregador). Más corto que el de los clientes
+    # para que la latencia extremo a extremo no dependa del desfase entre los dos ciclos de
+    # publicación (RNF-03); con 100 ms en ambos saltos el p95 puede rozar los 200 ms.
+    gateway_publishing_interval_ms: 20
   reconnect: { initial_delay_s: 0.5, max_delay_s: 5.0 }
 
 detection:                  # RF-33 a RF-40
