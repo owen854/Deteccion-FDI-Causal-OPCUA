@@ -3,15 +3,17 @@
 Marco de simulación para la **detección de inyección de datos falsos (FDI) en redes OPC UA mediante análisis causal**.
 Proyecto del semillero SIDDFAI (grupo A&C), Universidad de Pamplona.
 
-> **Estado: Fases 0 a 5 completadas.**
+> **Estado: versión 1, primer cierre del proyecto (Fases 0 a 7 completadas).** Los requerimientos diferidos y su justificación están en [docs/alcance_v1.md](docs/alcance_v1.md).
 > - **Fase 0:** arquitectura, contratos de datos, interfaces, configuración y pruebas de aceptación.
 > - **Fase 1:** seguridad OPC UA (PKI por componente, listas de confianza, usuarios, políticas Basic256Sha256 / Aes128_Sha256_RsaOaep / Aes256_Sha256_RsaPss), modelo de información real y pruebas de concepto, con el cifrado verificado en Wireshark y la interoperabilidad con UaExpert.
 > - **Fase 2:** modelo de dos tanques (SciPy y RK4), sensores, bomba, perturbaciones legítimas, PI sintonizado y lazo cerrado offline.
 > - **Fase 3:** co-simulación en red. Planta, gateway transparente, controlador y monitor corren como procesos OPC UA cifrados, con reloj de co-simulación, plano de experimento, historiador, corridas con manifiesto, reconexión automática, validación de la configuración, bitácoras por componente y HMI v0.
 > - **Fase 4:** motor de inyección FDI en el gateway comprometido (sesgo, rampa y replay, con sigilo, ataques coordinados y sobre el actuador), etiquetado automático, el mismo motor en modo offline, catálogo de 9 escenarios, datasets v1 reproducibles y ataques interactivos desde la HMI.
 > - **Fase 5:** modelo causal de referencia. Grafo físico, descubrimiento con PCMCI+ y Granger, análisis de sensibilidad, comparación y consolidación del grafo, SCM físico-informado y por regresión, y persistencia del modelo (comando `fdisim train`).
+> - **Fase 6:** detector causal (gemelo causal en dos horizontes, umbral asimétrico, CUSUM y EWMA calibrados al FPR objetivo, alarmas e identificación de la variable atacada), método base de umbrales, detección en línea en el monitor igual a la fuera de línea (comando `fdisim detect`).
+> - **Fase 7:** HMI completa (operación, experimentos, detección, grafo causal, resultados y comunicaciones) y **aplicativo en un solo paso**: `FDISim.bat`, `fdisim` o `fdisim ui` preparan todo y lanzan las corridas desde el navegador.
 >
-> Las funciones de fases posteriores lanzan `NotImplementedError` con la fase y el requerimiento que las implementa (p. ej. `"Fase 4 — RF-17: ataque de sesgo"`).
+> Lo diferido (campañas con repeticiones y estadística de la Fase 8; RF-35 y RF-39) lanza `NotImplementedError` con la fase o «Diferido (v2)» y el requerimiento.
 
 Documentos de referencia (carpeta `Documentacion/` del repositorio):
 
@@ -21,6 +23,8 @@ Documentos de referencia (carpeta `Documentacion/` del repositorio):
 | 02 — Informe OE1 | Revisión de OPC UA y FDI, y selección tecnológica |
 | 03 — Plan de Gestión del Proyecto | Fases, sprints, cronograma, riesgos y calidad |
 | 05 — Estudio comparativo del modelo causal | Grafo físico frente a PCMCI+ y Granger, consolidación y SCM (Fase 5) |
+
+Manual de usuario: [docs/manual_usuario.md](docs/manual_usuario.md).
 
 ## Arquitectura
 
@@ -51,7 +55,7 @@ Codigo Fuente/
 ├── scripts/                verificar_entorno · generar_certificados · poc_opcua_segura
 │                           verificar_cifrado · calibrar_lazo
 ├── src/fdisim/
-│   ├── cli.py              comandos: run · train · detect · campaign · report · ui · certs
+│   ├── cli.py              comandos: run · dataset · train · detect · ui · certs (fdisim a secas = ui)
 │   ├── common/             contratos de datos (types), config, reloj, plano de experimento,
 │   │                       canal HMI ↔ orquestador
 │   ├── process/      M1    modelo de dos tanques, sensores, bomba, perturbaciones
@@ -61,12 +65,24 @@ Codigo Fuente/
 │   ├── data/         M5    historiador, almacenamiento con manifiesto, etiquetas, datasets
 │   ├── causal/       M6    grafo físico, PCMCI+/Granger, comparación y consolidación, SCM,
 │   │                       persistencia y entrenamiento
-│   ├── detection/    M7-8  residuos, CUSUM/EWMA, estructura, identificación, umbrales
+│   ├── detection/    M7-8  residuos y gemelo causal, decisión calibrada, identificación,
+│   │                       método base, monitor en línea, ejecución y evaluación
 │   ├── evaluation/   M9    métricas, latencias, campañas, estadística, reportes
 │   ├── orchestration/M11   lanzador, componentes por proceso, ejecución en red y offline,
 │   │                       resumen de corridas
 │   └── ui/           M10   HMI NiceGUI: enlace OPC UA, páginas y componentes
 └── tests/                  test_estructura.py · unit/ · integration/
+```
+
+## Inicio rápido (un solo paso)
+
+1. Instale Python 3.12 y dé doble clic en `instalar.bat` (una sola vez).
+2. Dé doble clic en **`FDISim.bat`**. Se abre el navegador con el aplicativo; la primera vez crea los certificados y el modelo causal.
+
+En consola, con el entorno activado, basta con:
+
+```bash
+fdisim
 ```
 
 ## Instalación
@@ -118,9 +134,9 @@ Se instalan aparte, fuera de Python:
 pytest
 ```
 
-Resultado esperado tras la Fase 5: 203 pruebas superadas y 10 `xfailed`, en unos 2 min.
+Resultado esperado en la versión 1: 233 pruebas superadas, en unos 2 min.
 
-- Las `xfailed` son pruebas de aceptación de fases futuras, marcadas con `pending(...)`. Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca `pending`.
+- Las pruebas de aceptación de fases futuras se marcan con `pending(...)` (un `xfail` estricto). Cuando se implementa una función, su prueba pasa y pytest la reporta como `XPASS(strict)`: es la señal para retirar la marca. En la versión 1 ya no queda ninguna pendiente.
 - Las pruebas de integración levantan servidores OPC UA reales en localhost, con una PKI temporal y puertos libres, y se omiten si `asyncua` no está instalado. Incluyen una corrida corta con los cuatro procesos.
 - Para correr solo las unitarias:
 
@@ -128,7 +144,7 @@ Resultado esperado tras la Fase 5: 203 pruebas superadas y 10 `xfailed`, en unos
 pytest -m "not integration"
 ```
 
-Cobertura (RNF-17): 85 % del paquete con todas las pruebas. `pyproject.toml` configura coverage con el motor `sysmon` (Python ≥ 3.12), porque el motor por defecto se cuelga con las pruebas de asyncua.
+Cobertura (RNF-17): 83 % del paquete con todas las pruebas (las páginas de la HMI se verificaron en el navegador). `pyproject.toml` configura coverage con el motor `sysmon` (Python ≥ 3.12), porque el motor por defecto se cuelga con las pruebas de asyncua.
 
 ```bash
 pytest --cov=fdisim
@@ -223,15 +239,43 @@ Construye el modelo causal en unos 80 s:
 
 Guarda el modelo en `data/models/causal_v1/` con su reporte comparativo, figuras y manifiesto. Los parámetros identificados quedan dentro de ±1 % de los nominales y el RMSE a un paso es de 0,141 cm (límite de 0,2 cm). Detalle en [docs/guia_modelo_causal.md](docs/guia_modelo_causal.md); el análisis completo está en el Documento 05.
 
-## Uso previsto (fases siguientes)
+## Fase 6: detector causal y método base
+
+```bash
+fdisim detect --data data/processed/v1/test.parquet
+```
 
 ```bash
 fdisim detect --run data/raw/<run_id>
 ```
 
+- **Primer comando:** evalúa el detector causal y el método base sobre el dataset de prueba y escribe `results/deteccion_v1/` (reporte, CSV y figuras).
+- **Segundo comando:** reprocesa una corrida guardada. `fdisim run` lo hace solo al terminar cada corrida; en red, el monitor además detecta en línea y se verifica que las alarmas coincidan (RF-38).
+
+| Indicador (dataset v1) | Causal | Base |
+|---|---|---|
+| Tasa de detección (16 ataques, 8 escenarios) | 100 % | 62,5 % |
+| Retardo medio | 26,8 s | 262,8 s |
+| FPR en operación normal (meta ≤ 2 %) | 1,0 % | 0,4 % |
+| Identificación de la variable atacada | 93,8 % | 10 % |
+
+Detalle en [docs/guia_deteccion.md](docs/guia_deteccion.md).
+
+## Fase 7: HMI completa y aplicativo en un solo paso
+
+```bash
+fdisim ui
+```
+
+La HMI tiene seis páginas: operación, experimentos, detección, grafo causal, resultados y comunicaciones. Desde **Experimentos** se elige el escenario y el modo (en red u offline), se inicia y se detiene la corrida y se arman ataques en caliente; la detección se ve en vivo y la alarma aparece en el encabezado de todas las páginas en menos de 1 s. Ver el [manual de usuario](docs/manual_usuario.md) y las capturas en `docs/evidencias/fase7/`.
+
+## Fases siguientes
+
 ```bash
 fdisim campaign --campaign config/campaigns/campana_oe4.yaml
 ```
+
+Las campañas con ≥ 30 repeticiones, las pruebas estadísticas y el reporte HTML (Fase 8), y el informe final y el artículo (Fase 9) quedan fuera de la versión 1.
 
 ## Mapa de módulos, requerimientos y fases
 
@@ -244,7 +288,7 @@ fdisim campaign --campaign config/campaigns/campana_oe4.yaml
 | `data` | M5 | RF-25 a RF-27 | F3, F4 |
 | `causal` | M6 | RF-28 a RF-32 | F5 |
 | `detection` | M7, M8 | RF-33 a RF-40 | F6 |
-| `evaluation` | M9 | RF-41 a RF-46 | F8 |
+| `evaluation` | M9 | RF-41 a RF-46 | F6 (métricas y evaluación), F8 |
 | `ui` | M10 | RF-47 a RF-52 | F7 |
 | `common`, `orchestration`, `cli` | M11 | RF-53 a RF-55 | F0, F3 |
 
