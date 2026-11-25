@@ -24,7 +24,23 @@ from typing import Any
 from fdisim.common.types import Alarm, AttackEvent, GroundTruthRecord, Sample
 
 TABLES = ("samples", "ground_truth", "attacks", "detections", "alarms")
-_STRING_COLUMNS = {"tag", "status", "attack_id", "type", "targets", "params"}
+_STRING_COLUMNS = {
+    "tag",
+    "status",
+    "attack_id",
+    "type",
+    "targets",
+    "params",
+    "detector",
+    "suspected",
+    "triggered",
+    "scores",
+    "alarm_id",
+    "kind",
+    "variables",
+    "suspected_tag",
+    "state",
+}
 _BOOL_COLUMNS = {"attack_active"}
 
 
@@ -93,11 +109,53 @@ class Historian:
             },
         )
 
-    def record_detection(self, t: float, detector: str, scores: dict[str, float]) -> None:
-        raise NotImplementedError("Fase 6 — RF-25")
+    def record_detection(
+        self,
+        t: float,
+        detector: str,
+        scores: dict[str, float],
+        *,
+        alarm: bool = False,
+        suspected: str | None = None,
+        triggered: tuple[str, ...] = (),
+        processing_ms: float | None = None,
+    ) -> None:
+        """Salida de un detector en un instante de la rejilla (puntuaciones en JSON)."""
+        import json
+        import math
+
+        clean = {k: (round(v, 6) if math.isfinite(v) else None) for k, v in scores.items()}
+        self._append(
+            "detections",
+            {
+                "sim_time": float(t),
+                "detector": detector,
+                "alarm": float(alarm),
+                "suspected": suspected or "",
+                "triggered": ",".join(triggered),
+                "processing_ms": float(processing_ms)
+                if processing_ms is not None
+                else float("nan"),
+                "scores": json.dumps(clean, sort_keys=True),
+            },
+        )
 
     def record_alarm(self, alarm: Alarm) -> None:
-        raise NotImplementedError("Fase 6 — RF-25")
+        """Una fila al abrir la alarma (``active``) y otra al cerrarla (``closed``)."""
+        self._append(
+            "alarms",
+            {
+                "alarm_id": alarm.alarm_id,
+                "detector": alarm.detector.value,
+                "kind": alarm.kind.value,
+                "t": float(alarm.t),
+                "t_end": float(alarm.t_end) if alarm.t_end is not None else float("nan"),
+                "variables": ",".join(alarm.variables),
+                "score": float(alarm.score),
+                "suspected_tag": alarm.suspected_tag or "",
+                "state": alarm.state.value,
+            },
+        )
 
     def flush(self) -> None:
         for table in TABLES:
