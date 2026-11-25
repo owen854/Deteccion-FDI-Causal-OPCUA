@@ -3,14 +3,26 @@
 Enlaces ``fuente(t − lag) → destino(t)``. Los enlaces con ``lag = 0`` son contemporáneos
 (ley de control y actuador); los de ``lag = 1`` provienen de los balances de masa y de la
 memoria integral del PID.
+
+El grafo es temporal: entre dos variables puede haber varios enlaces con distinto retardo,
+por eso se representa como ``networkx.MultiDiGraph`` (una arista por retardo, con clave
+``lag<k>``). Se exporta a GraphML o JSON (RNF-13).
+
+Implementado en la Fase 5.
 """
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fdisim.common.types import FT_101, LT_101, LT_102, P_101, SP_102
+
+NODES: tuple[str, ...] = (SP_102, P_101, FT_101, LT_101, LT_102)
+EXOGENOUS: frozenset[str] = frozenset({SP_102})  # la fija el operador o el escenario
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +50,73 @@ def parents(tag: str, links: tuple[CausalLink, ...] = PHYSICAL_LINKS) -> tuple[C
     return tuple(link for link in links if link.target == tag)
 
 
-def build_prior_graph(links: tuple[CausalLink, ...] = PHYSICAL_LINKS) -> Any:
-    """Devuelve un ``networkx.DiGraph`` con atributos ``lag`` y ``mechanism`` por arista."""
-    raise NotImplementedError("Fase 5 — RF-28: grafo físico como networkx.DiGraph")
+def edge_set(links: Iterable[Any]) -> set[tuple[str, str, int]]:
+    """Conjunto de aristas ``(fuente, destino, retardo)`` de cualquier lista de enlaces."""
+    return {(link.source, link.target, int(link.lag)) for link in links}
 
 
-def export_graph(graph: Any, path: str, fmt: str = "graphml") -> None:
+def build_prior_graph(links: Iterable[CausalLink] = PHYSICAL_LINKS) -> Any:
+    """Devuelve un ``networkx.MultiDiGraph`` con atributos ``lag`` y ``mechanism`` por arista."""
+    import networkx as nx
+
+    graph = nx.MultiDiGraph(name="grafo causal")
+    graph.add_nodes_from(NODES)
+    for link in links:
+        graph.add_node(link.source)
+        graph.add_node(link.target)
+        graph.add_edge(
+            link.source,
+            link.target,
+            key=f"lag{link.lag}",
+            lag=int(link.lag),
+            mechanism=link.mechanism,
+        )
+    return graph
+
+
+def links_from_graph(graph: Any) -> tuple[CausalLink, ...]:
+    """Inverso de ``build_prior_graph``."""
+    links = [
+        CausalLink(str(u), str(v), int(data["lag"]), str(data.get("mechanism", "")))
+        for u, v, data in graph.edges(data=True)
+    ]
+    return tuple(sorted(links, key=lambda link: (link.target, link.lag, link.source)))
+
+
+def export_graph(graph: Any, path: str | Path, fmt: str = "graphml") -> Path:
     """Exporta a GraphML o JSON (RNF-13)."""
-    raise NotImplementedError("Fase 5 — RF-28: exportación del grafo")
+    import networkx as nx
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "graphml":
+        nx.write_graphml(graph, path)
+    elif fmt == "json":
+        data = {
+            "nodes": list(graph.nodes),
+            "links": [
+                {"source": u, "target": v, "lag": d["lag"], "mechanism": d.get("mechanism", "")}
+                for u, v, d in graph.edges(data=True)
+            ],
+        }
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    else:
+        raise ValueError(f"Formato no soportado: {fmt}")
+    return path
+
+
+def load_graph(path: str | Path) -> Any:
+    """Lee un grafo exportado en GraphML o JSON."""
+    import networkx as nx
+
+    path = Path(path)
+    if path.suffix == ".graphml":
+        graph = nx.read_graphml(path, force_multigraph=True)
+        for _, _, data in graph.edges(data=True):
+            data["lag"] = int(data["lag"])
+        return graph
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return build_prior_graph(
+        CausalLink(item["source"], item["target"], int(item["lag"]), item.get("mechanism", ""))
+        for item in data["links"]
+    )

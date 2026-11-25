@@ -61,7 +61,11 @@ def register(
 
         with ui.card().classes("w-full"):
             refresh_levels = trend_chart(
-                state, [LT_101, LT_102, SP_102], "Niveles y consigna", y_name="cm"
+                state,
+                [LT_101, LT_102, SP_102],
+                "Niveles y consigna (sombreado: ataque)",
+                show_attack_bands=True,
+                y_name="cm",
             )
         with ui.row().classes("w-full no-wrap gap-4"):
             with ui.card().classes("w-1/2"):

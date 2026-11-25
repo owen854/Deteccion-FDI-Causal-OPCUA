@@ -152,6 +152,7 @@ class Alarm:
     score: float
     suspected_tag: str | None = None  # identificación (RF-37)
     state: AlarmState = AlarmState.ACTIVE
+    t_end: float | None = None  # instante en que la alarma se cerró (fin de la retención)
 
 
 @dataclass(frozen=True, slots=True)

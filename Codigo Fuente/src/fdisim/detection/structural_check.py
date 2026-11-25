@@ -5,7 +5,9 @@ En ventanas deslizantes estima la fuerza de los enlaces esperados del grafo de r
 normal. Un replay rompe la dependencia entre la actuación actual y el nivel reproducido; un
 enlace que desaparece (o uno espurio que aparece) genera una alarma ``STRUCTURAL``.
 
-Fase de implementación: Fase 6.
+Diferido en la versión v1 (prioridad «Debería» en el ERS): el residuo del gemelo causal en
+horizonte cubre el replay con excitación (cambio de consigna o perturbación durante el ataque).
+Queda para una versión posterior, junto con la marca de agua física (RF-39).
 """
 
 from __future__ import annotations
@@ -22,8 +24,10 @@ class StructuralConsistencyChecker:
         self.step = step
 
     def fit(self, normal_data: object) -> StructuralConsistencyChecker:
-        raise NotImplementedError("Fase 6 — RF-35: distribución normal de la fuerza de enlaces")
+        raise NotImplementedError(
+            "Diferido (v2) — RF-35: distribución normal de la fuerza de enlaces"
+        )
 
     def update(self, values: Mapping[str, float]) -> dict[str, float]:
         """Devuelve ``{"src->dst@lag": puntuación}`` cuando se completa un paso de ventana."""
-        raise NotImplementedError("Fase 6 — RF-35: verificación estructural")
+        raise NotImplementedError("Diferido (v2) — RF-35: verificación estructural")

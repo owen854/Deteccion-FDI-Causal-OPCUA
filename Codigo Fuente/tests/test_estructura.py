@@ -76,8 +76,10 @@ def test_grafo_fisico_usa_etiquetas_conocidas():
 
 def test_firmas_de_identificacion_sobre_variables_del_grafo():
     for tag, signature in SIGNATURES.items():
-        assert tag in signature
         assert signature <= set(PROCESS_TAGS)
+        # Una medición falsificada altera su propio residuo; la orden de la bomba alterada con
+        # el eco oculto solo se nota en el caudal que produce (Fase 6, RF-37).
+        assert (tag in signature) if tag != "P-101" else signature == {"FT-101"}
 
 
 def test_ventana_de_ataque():
@@ -117,5 +119,5 @@ def test_cli_construye_y_reporta_pendientes(capsys):
     parser = build_parser()
     for command in ("run", "train", "detect", "campaign", "report", "ui", "certs"):
         assert command in parser._subparsers._group_actions[0].choices  # noqa: SLF001
-    assert main(["train", "--data", "x.parquet"]) == 2
-    assert "Fase 5" in capsys.readouterr().err
+    assert main(["campaign", "--campaign", "x"]) == 2
+    assert "Fase 8" in capsys.readouterr().err

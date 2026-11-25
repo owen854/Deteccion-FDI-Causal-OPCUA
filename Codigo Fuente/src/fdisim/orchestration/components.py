@@ -293,12 +293,19 @@ async def _run_monitor(spec: ComponentSpec, bus: ExperimentBus, logger: logging.
         **client_options(cfg),
     )
     historian = Historian(Path(spec.run_dir), fmt=str(cfg.get("data", {}).get("format", "parquet")))
+    detectors = _online_detectors(cfg, logger)
+
+    def publish_result(kind: str, result: Any) -> None:
+        bus.publish(EventType.DETECTION, detection_payload(kind, result))
+
     monitor = OnlineMonitor(
         client,
-        [],
+        detectors,
         historian,
         float(cfg.get("detection", {}).get("period_s", 0.5)),
+        on_result=publish_result,
         publishing_interval_ms=publishing_interval(cfg),
+        time_scale=float(cfg.get("simulation", {}).get("time_scale", 1.0)),
         logger=logger,
     )
     await monitor.start()
@@ -312,6 +319,46 @@ async def _run_monitor(spec: ComponentSpec, bus: ExperimentBus, logger: logging.
         await loop
         await commands.close()
     bus.publish(EventType.STATS, monitor.stats())
+
+
+def _online_detectors(cfg: Mapping[str, Any], logger: logging.Logger) -> list[Any]:
+    """Detector causal y método base calibrados; sin modelo, el monitor solo registra."""
+    from fdisim.detection.pipeline import load_detectors, model_available, model_dir_of
+
+    if not model_available(cfg):
+        logger.warning("Sin modelo causal en %s: el monitor solo registra", model_dir_of(cfg))
+        return []
+    try:
+        return load_detectors(cfg, calibrate=False)
+    except Exception as exc:
+        logger.warning("Detectores no disponibles (%s): el monitor solo registra", exc)
+        return []
+
+
+def detection_payload(kind: str, result: Any) -> dict[str, Any]:
+    """Salida compacta de un detector para el plano de experimento (HMI, RF-49)."""
+    return {
+        "t": result.t,
+        "detector": kind,
+        "alarm": bool(result.alarm),
+        "suspected": result.suspected_tag,
+        "triggered": list(result.triggered),
+        "scores": {k: v for k, v in result.scores.items() if not k.startswith("ewma:")},
+        "alarms": [
+            {
+                "alarm_id": a.alarm_id,
+                "detector": a.detector.value,
+                "kind": a.kind.value,
+                "t": a.t,
+                "t_end": a.t_end,
+                "variables": list(a.variables),
+                "score": a.score,
+                "suspected_tag": a.suspected_tag,
+                "state": a.state.value,
+            }
+            for a in result.alarms
+        ],
+    }
 
 
 _RUNNERS: dict[str, Callable[[ComponentSpec, ExperimentBus, logging.Logger], Awaitable[None]]] = {

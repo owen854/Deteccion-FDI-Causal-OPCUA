@@ -48,6 +48,7 @@ class EventType(StrEnum):
     FINISHED = "finished"  # la planta completó la duración del escenario
     STATS = "stats"  # estadísticas finales del componente
     ERROR = "error"  # fallo irrecuperable
+    DETECTION = "detection"  # salida de los detectores en línea (RF-38, RF-49)
 
 
 @dataclass(frozen=True, slots=True)

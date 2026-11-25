@@ -4,11 +4,12 @@ Comandos::
 
     fdisim run       --scenario config/scenarios/sesgo_lt102.yaml [--mode network|offline]
     fdisim train     --data data/processed/train.parquet --out data/models/causal_v1
-    fdisim detect    --run data/raw/<run_id>
+    fdisim detect    --run data/raw/<run_id>  |  --data data/processed/v1/test.parquet
     fdisim campaign  --campaign config/campaigns/campana_oe4.yaml
     fdisim report    --campaign-dir results/campana_oe4
     fdisim ui        [--host 127.0.0.1] [--port 8080]
     fdisim certs     [--out-dir certs]
+    fdisim           (sin argumentos) abre el aplicativo completo: equivale a «fdisim ui»
 
 Los comandos cuya funcionalidad aún no existe informan la fase en la que se implementan y
 terminan con código 2.
@@ -44,6 +45,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
             return 1
         print(f"[fdisim] Corrida offline guardada en {run_dir}")
         _print_summary(run_dir)
+        if not args.sin_deteccion:
+            _detect_after_run(run_dir, args.config)
         return 0
 
     from fdisim.orchestration.runtime import PortInUseError, run_scenario_network
@@ -58,6 +61,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             time_scale=args.escala,
             progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
             open_browser=not args.no_abrir,
+            external_channel=args.canal_hmi,
         )
     except KeyboardInterrupt:
         print("[fdisim] Corrida interrumpida; los datos parciales quedaron guardados.")
@@ -66,7 +70,50 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"[fdisim] No se inició la corrida: {exc}", file=sys.stderr)
         return 1
     _print_summary(run_dir)
+    if not args.sin_deteccion:
+        _detect_after_run(run_dir, args.config)
     return 0
+
+
+def _detect_after_run(run_dir: Path, config_path: str) -> None:
+    """Reprocesa la corrida con ambos detectores (si hay modelo) e imprime el resultado."""
+    from fdisim.common.config import load_config
+    from fdisim.detection.pipeline import detect_run, model_available
+
+    config = load_config(Path(config_path)).to_dict()
+    if not model_available(config):
+        print("[fdisim] Sin modelo causal: genere uno con «fdisim dataset» y «fdisim train».")
+        return
+    try:
+        summary = detect_run(run_dir, config, progress=lambda m: print(f"[fdisim] {m}"))
+    except Exception as exc:  # la corrida ya quedó guardada; la detección es un extra
+        print(f"[fdisim] No se pudo ejecutar la detección: {exc}", file=sys.stderr)
+        return
+    _print_detection(summary)
+
+
+def _print_detection(summary: dict) -> None:
+    labels = {"causal": "Causal", "threshold": "Base"}
+    for row in summary.get("metrics", []):
+        name = labels.get(row["detector"], row["detector"])
+        if row.get("attack_id"):
+            delay = row.get("delay_s")
+            found = (
+                f"detectado a los {delay:.1f} s; variable identificada: "
+                f"{row.get('identified') or '—'}"
+                if row.get("detected")
+                else "NO detectado"
+            )
+            print(f"Detección {name}: ataque {row['attack_id']} sobre {row['targets']} {found}")
+        else:
+            print(f"Detección {name}: corrida sin ataques, FPR {100 * (row.get('fpr') or 0):.2f} %")
+    compare = summary.get("online_vs_offline")
+    for kind, item in (compare or {}).items():
+        mark = "OK" if item["match"] else "NO"
+        print(
+            f"  [{mark}] RF-38 alarmas en línea = reprocesamiento ({kind}: "
+            f"{item['online']} en línea, {item['offline']} fuera de línea)"
+        )
 
 
 def _print_summary(run_dir: Path) -> None:
@@ -141,11 +188,93 @@ def _cmd_dataset(args: argparse.Namespace) -> int:
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
-    raise NotImplementedError("Fase 5 — RF-28..RF-32: construcción del modelo causal")
+    import json
+
+    from fdisim.causal.training import train_causal_model
+
+    data = Path(args.data)
+    if not data.is_file():
+        print(
+            f"[fdisim] No existe el dataset {data}. Genérelo con: fdisim dataset", file=sys.stderr
+        )
+        return 1
+    manifest = train_causal_model(
+        data,
+        Path(args.out),
+        val_path=Path(args.val) if args.val else None,
+        config_path=Path(args.config),
+        tau_max=args.tau_max,
+        alpha=args.alpha,
+        coarse_block=args.bloque,
+        with_sensitivity=not args.sin_sensibilidad,
+        progress=lambda msg: print(f"[fdisim] {msg}", flush=True),
+    )
+    info = json.loads(manifest.read_text(encoding="utf-8"))
+    rmse = info["validation_rmse"]
+    for tag, value in rmse["physics_informed"].items():
+        limit = rmse["limit_2sigma"].get(tag)
+        print(f"  RMSE {tag}: {value:.4f}" + (f" (límite {limit:.2f})" if limit else ""))
+    for name, ok in info["criteria"].items():
+        print(f"  [{'OK' if ok else 'NO'}] {name}")
+    print(f"Reporte: {manifest.parent / 'report.md'}")
+    return 0
 
 
 def _cmd_detect(args: argparse.Namespace) -> int:
-    raise NotImplementedError("Fase 6 — RF-38: detección fuera de línea")
+    from fdisim.common.config import load_config
+    from fdisim.detection.pipeline import (
+        DETECTOR_FILE,
+        detect_dataset,
+        detect_run,
+        model_available,
+        model_dir_of,
+    )
+
+    config = load_config(Path(args.config)).to_dict()
+    model_dir = Path(args.model) if args.model else model_dir_of(config)
+    if not model_available(config, model_dir):
+        print(
+            f"[fdisim] No hay un modelo causal en {model_dir}. Genérelo con: "
+            "fdisim dataset y fdisim train",
+            file=sys.stderr,
+        )
+        return 1
+    if args.recalibrar and (model_dir / DETECTOR_FILE).is_file():
+        (model_dir / DETECTOR_FILE).unlink()
+
+    def say(message: str) -> None:
+        print(f"[fdisim] {message}", flush=True)
+
+    if args.run:
+        summary = detect_run(Path(args.run), config, model_dir, say)
+        _print_detection(summary)
+        print(f"Resultados en {Path(args.run) / 'detection'}")
+        return 0
+    data = Path(args.data)
+    if not data.is_file():
+        print(f"[fdisim] No existe el dataset {data}", file=sys.stderr)
+        return 1
+    out = Path(args.out) if args.out else paths.RESULTS_DIR / f"deteccion_{data.parent.name}"
+    report = detect_dataset(data, config, out, model_dir, say)
+    print(f"{'Indicador':<30} {'Causal':>10} {'Base':>10}")
+    rows = (
+        ("Tasa de detección (DR)", "dr", 100.0, " %"),
+        ("Retardo medio [s]", "delay_mean_s", 1.0, ""),
+        ("FPR en corridas normales", "fpr_normal", 100.0, " %"),
+        ("Identificación correcta", "identification", 100.0, " %"),
+        ("Procesamiento p95 [ms]", "processing_p95_ms", 1.0, ""),
+    )
+    causal = report["overall"].get("causal", {})
+    base = report["overall"].get("threshold", {})
+    for label, key, scale, unit in rows:
+        cells = []
+        for item in (causal, base):
+            value = item.get(key)
+            ok = isinstance(value, int | float) and value == value
+            cells.append(f"{scale * value:.2f}{unit}" if ok else "—")
+        print(f"{label:<30} {cells[0]:>10} {cells[1]:>10}")
+    print(f"Reporte: {out / 'report.md'}")
+    return 0
 
 
 def _cmd_campaign(args: argparse.Namespace) -> int:
@@ -198,7 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
         "mediante análisis causal.",
     )
     parser.add_argument("--version", action="version", version=f"fdisim {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     def add(
         name: str, help_: str, handler: Callable[[argparse.Namespace], int]
@@ -230,6 +359,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--integrador", choices=["solve_ivp", "rk4"], default=None, help="solo en modo offline"
     )
+    p.add_argument(
+        "--sin-deteccion", action="store_true", help="no reprocesar la corrida con los detectores"
+    )
+    p.add_argument(
+        "--canal-hmi",
+        action="store_true",
+        help="atender a una HMI externa por el canal de experimento (uso interno de fdisim ui)",
+    )
 
     p = add(
         "dataset",
@@ -253,11 +390,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--integrador", choices=["solve_ivp", "rk4"], default=None)
 
     p = add("train", "Construye el modelo causal con datos de operación normal", _cmd_train)
-    p.add_argument("--data", required=True)
+    p.add_argument("--data", required=True, help="train.parquet del dataset")
+    p.add_argument("--val", default=None, help="por defecto, val.parquet junto a --data")
     p.add_argument("--out", default=str(paths.MODELS_DIR / "causal_v1"))
+    p.add_argument("--tau-max", type=int, default=3, help="retardo máximo del descubrimiento")
+    p.add_argument("--alpha", type=float, default=0.01, help="nivel de significancia")
+    p.add_argument(
+        "--bloque", type=int, default=10, help="muestras por bloque en la resolución agregada"
+    )
+    p.add_argument(
+        "--sin-sensibilidad", action="store_true", help="omitir el análisis de sensibilidad"
+    )
 
-    p = add("detect", "Reprocesa una corrida guardada con los detectores", _cmd_detect)
-    p.add_argument("--run", required=True)
+    p = add(
+        "detect",
+        "Ejecuta los detectores sobre una corrida guardada o evalúa un dataset etiquetado",
+        _cmd_detect,
+    )
+    target = p.add_mutually_exclusive_group(required=True)
+    target.add_argument("--run", help="carpeta de una corrida (data/raw/<run_id>)")
+    target.add_argument("--data", help="dataset etiquetado, p. ej. data/processed/v1/test.parquet")
+    p.add_argument("--model", default=None, help="carpeta del modelo (por defecto, la configurada)")
+    p.add_argument("--out", default=None, help="con --data: carpeta del reporte")
+    p.add_argument("--recalibrar", action="store_true", help="recalcular detector.json")
 
     p = add("campaign", "Ejecuta una campaña experimental (OE4)", _cmd_campaign)
     p.add_argument("--campaign", required=True)
@@ -285,6 +440,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:  # «fdisim» a secas abre el aplicativo completo (HMI)
+        argv = ["ui"]
     args = build_parser().parse_args(argv)
     try:
         return args.handler(args)

@@ -1,12 +1,14 @@
-"""Página «Experimentos» (``/experimentos``): escenario en curso, ataques programados y
-activación interactiva de ataques (RF-48, RF-23).
+"""Página «Experimentos» (``/experimentos``): iniciar y detener corridas, escenario en curso,
+ataques programados y activación interactiva de ataques (RF-48, RF-23).
 
-La HMI no habla con el gateway para esto: envía la orden al orquestador por el canal local
-del plano de experimento (``common.experiment_channel``), que la reenvía al gateway. El ataque
-empieza en el tiempo simulado actual (≤ 1 s tras la orden) y queda etiquetado como cualquier
-otro. Solo está disponible si la corrida se inició con ``fdisim run --ui``.
+- **Corrida** (Fase 7): se elige el escenario, el modo (en red u offline), la duración, la
+  escala de tiempo y la semilla, y se inicia o detiene sin usar la consola (``RunManager``).
+  La seguridad OPC UA es la de la configuración (SignAndEncrypt) y se muestra en el encabezado.
+- **Ataques en caliente** (Fase 4): la HMI no habla con el gateway para esto; envía la orden al
+  orquestador por el canal local del plano de experimento, que la reenvía al gateway. El ataque
+  empieza en el tiempo simulado actual (≤ 1 s tras la orden) y queda etiquetado.
 
-Implementado en la Fase 4 (versión inicial; se amplía en la Fase 7).
+Implementado en la Fase 4; control de corridas en la Fase 7.
 """
 
 from __future__ import annotations
@@ -123,27 +125,63 @@ def _row(
     }
 
 
-def register(state: UiState, link: Any = None, client: Any = None) -> None:
+def register(state: UiState, link: Any = None, manager: Any = None) -> None:
     from nicegui import run, ui
 
     from fdisim.ui.components.header import page_header
+    from fdisim.ui.run_manager import scenario_catalog
 
     @ui.page("/experimentos")
     def page() -> None:
         ui.page_title("FDISim-OPCUA · Experimentos")
         ui.query("body").style("background-color: #f1f5f9")
         refresh_header = page_header("Experimentos", state, link)
+        catalog = scenario_catalog()
+        by_path = {item["path"]: item for item in catalog}
 
-        if client is None:
-            with ui.card().classes("w-full"):
-                ui.label("Ataques interactivos no disponibles").classes("font-bold")
-                ui.label(
-                    "Para armar ataques en caliente, inicie la corrida con la HMI: "
-                    "fdisim run --scenario config/scenarios/normal.yaml --ui"
-                )
-            ui.timer(1.0, refresh_header)
-            return
+        # ------------------------------------------------------------ corrida (RF-48)
+        with ui.card().classes("w-full"):
+            ui.label("Corrida").classes("font-bold")
+            with ui.row().classes("w-full items-end gap-4"):
+                scenario = ui.select(
+                    {item["path"]: item["name"] for item in catalog},
+                    label="Escenario",
+                    value=next((i["path"] for i in catalog if i["name"] == "normal"), None),
+                ).classes("w-56")
+                mode = ui.select(
+                    {"network": "En red (OPC UA)", "offline": "Offline (rápido)"},
+                    label="Modo",
+                    value="network",
+                ).classes("w-44")
+                duration = ui.number("Duración [s simulados]", value=None, min=10, step=60)
+                scale = ui.number("Escala de tiempo", value=5, min=1, max=10, step=1)
+                seed = ui.number("Semilla (opcional)", value=None, step=1)
+                scale.bind_visibility_from(mode, "value", lambda v: v == "network")
 
+                async def start_run() -> None:
+                    if not scenario.value:
+                        ui.notify("Elija un escenario", type="warning")
+                        return
+                    message = manager.start(
+                        scenario.value,
+                        mode.value,
+                        duration.value or None,
+                        scale.value or None,
+                        int(seed.value) if seed.value is not None else None,
+                    )
+                    ui.notify(message, type="positive" if "iniciada" in message else "warning")
+
+                async def stop_run() -> None:
+                    message = await run.io_bound(manager.stop)
+                    ui.notify(message)
+
+                start_button = ui.button("Iniciar", on_click=start_run, color="green")
+                ui.button("Detener", on_click=stop_run, color="red")
+            description = ui.label().classes("text-sm text-gray-600")
+            prepare = ui.label().classes("text-sm")
+            log = ui.log(max_lines=200).classes("w-full h-40 text-xs")
+
+        # ------------------------------------------------------------ ataques (RF-23)
         with ui.row().classes("w-full no-wrap gap-4 items-stretch"):
             with ui.card().classes("w-1/3"):
                 ui.label("Armar un ataque (gateway comprometido)").classes("font-bold")
@@ -151,7 +189,7 @@ def register(state: UiState, link: Any = None, client: Any = None) -> None:
                 target = ui.select(list(TARGETS), label="Variable objetivo", value=LT_102).classes(
                     "w-full"
                 )
-                duration = ui.number("Duración [s simulados]", value=120, min=1, step=10)
+                attack_duration = ui.number("Duración [s simulados]", value=120, min=1, step=10)
                 bias = ui.number("Sesgo b", value=2.0, step=0.5)
                 slope = ui.number("Pendiente r [unidades/s]", value=0.01, step=0.005, format="%.3f")
                 max_dev = ui.number("Desviación máxima", value=5.0, step=0.5)
@@ -164,10 +202,14 @@ def register(state: UiState, link: Any = None, client: Any = None) -> None:
                 stealth.bind_visibility_from(kind, "value", lambda v: v != "replay")
 
                 async def arm() -> None:
+                    client = manager.client
+                    if client is None or not manager.running or manager.mode == "offline":
+                        ui.notify("Inicie primero una corrida en red", type="warning")
+                        return
                     request = attack_request(
                         kind.value,
                         target.value,
-                        duration.value or 60,
+                        attack_duration.value or 60,
                         bias=bias.value or 0.0,
                         slope_per_s=slope.value or 0.0,
                         max_deviation=max_dev.value or 0.0,
@@ -200,7 +242,8 @@ def register(state: UiState, link: Any = None, client: Any = None) -> None:
                     to_disarm = ui.select([], label="Ataque activo").classes("w-48")
 
                     async def disarm() -> None:
-                        if not to_disarm.value:
+                        client = manager.client
+                        if not to_disarm.value or client is None:
                             return
                         reply = await run.io_bound(client.disarm, to_disarm.value)
                         ui.notify(
@@ -211,11 +254,40 @@ def register(state: UiState, link: Any = None, client: Any = None) -> None:
 
                     ui.button("Desarmar", on_click=disarm)
 
-        async def refresh() -> None:
+        shown = {"lines": 0}
+
+        def refresh() -> None:
             refresh_header()
-            status = await run.io_bound(client.status)
-            if not status.get("ok"):
-                summary.text = status.get("error", "Sin corrida activa")
+            item = by_path.get(scenario.value or "")
+            if item:
+                description.text = (
+                    f"{item['description']} Duración del escenario: {item['duration_s']:.0f} s; "
+                    f"ataques programados: {item['attacks']}."
+                )
+            prepare.text = (
+                "Corrida lanzada desde la consola: esta HMI solo la observa."
+                if not manager.owns_runs
+                else f"Preparación del aplicativo: {manager.prepare_status}"
+            )
+            start_button.set_enabled(
+                manager.owns_runs and not manager.running and not manager.preparing
+            )
+            lines = list(manager.output)
+            if len(lines) < shown["lines"]:
+                log.clear()
+                shown["lines"] = 0
+            for line in lines[shown["lines"] :]:
+                log.push(line)
+            shown["lines"] = len(lines)
+            status = state.run_status
+            if not status.get("ok") or not manager.running:
+                summary.text = (
+                    f"Corrida en curso: {manager.scenario} (offline)"
+                    if manager.running and manager.mode == "offline"
+                    else "Sin corrida en red activa"
+                )
+                table.rows = []
+                table.update()
                 return
             rows = attack_rows(status)
             summary.text = (

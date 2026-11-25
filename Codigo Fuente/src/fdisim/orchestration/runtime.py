@@ -6,19 +6,24 @@
 3. Lanza los componentes como procesos (planta → gateway → controlador → monitor) y da la orden
    de inicio a la planta.
 4. Mientras corre, recoge del plano de experimento la verdad de terreno y los intervalos de
-   ataque que reporta el gateway; con ``--ui`` atiende además las órdenes de la HMI para armar
-   o desarmar ataques en caliente (RF-23).
+   ataque que reporta el gateway, y las salidas de los detectores en línea del monitor (Fase 6).
+   Con una HMI (``--ui`` o ``--canal-hmi``) atiende además sus órdenes por el canal de
+   experimento: estado, detecciones recientes, armar o desarmar ataques en caliente (RF-23),
+   reconocer alarmas (RF-36) y detener la corrida (RF-48).
 5. Al terminar (o ante un fallo o Ctrl+C) detiene todo en orden inverso, etiqueta las muestras
    y la verdad de terreno con los intervalos de ataque (RF-21), calcula el resumen
    (``summary.json``) y escribe el manifiesto con los SHA-256 (RF-26).
 
-Implementado en la Fase 3; ataques y etiquetas en la Fase 4.
+Implementado en la Fase 3; ataques y etiquetas en la Fase 4; detección en línea y HMI
+como punto de entrada en las Fases 6 y 7.
 """
 
 from __future__ import annotations
 
 import itertools
+import threading
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -157,8 +162,14 @@ def run_scenario_network(
     overrides: Mapping[str, Any] | None = None,
     progress: Callable[[str], None] | None = None,
     open_browser: bool = True,
+    external_channel: bool = False,
 ) -> Path:
-    """Ejecuta el escenario y devuelve la carpeta de la corrida (``data/raw/<run_id>``)."""
+    """Ejecuta el escenario y devuelve la carpeta de la corrida (``data/raw/<run_id>``).
+
+    Con ``external_channel`` la corrida atiende a una HMI que ya está corriendo (la que la
+    lanzó con ``fdisim ui``): el canal de experimento usa la dirección y la clave que esa HMI
+    dejó en las variables de entorno.
+    """
     import json
 
     from fdisim.common.config import deep_merge, load_config, load_scenario
@@ -202,7 +213,13 @@ def run_scenario_network(
     stats: dict[str, Any] = {}
     errors: list[str] = []
     attack_events: list[Any] = []
-    state: dict[str, Any] = {"finished": False, "sim_time": 0.0}
+    state: dict[str, Any] = {"finished": False, "sim_time": 0.0, "stop": False}
+    # Salidas de los detectores en línea para la HMI (RF-49): búfer circular con secuencia.
+    detections: deque[tuple[int, dict[str, Any]]] = deque(maxlen=6000)
+    alarm_log: dict[str, dict[str, Any]] = {}
+    acknowledged: set[str] = set()
+    seq = itertools.count(1)
+    lock = threading.Lock()
 
     def record(event: Event) -> None:
         """Registra un evento sin interrumpir (se usa también durante la parada)."""
@@ -217,6 +234,11 @@ def run_scenario_network(
                 f"Ataque {item.attack_id} ({item.type.value} sobre {','.join(item.targets)}) "
                 f"{when} en t = {item.t_end if item.t_end is not None else item.t_start:.1f} s"
             )
+        elif event.type is EventType.DETECTION:
+            with lock:
+                detections.append((next(seq), event.payload))
+                for alarm in event.payload.get("alarms", []):
+                    alarm_log[alarm["alarm_id"]] = alarm
         elif event.type is EventType.FINISHED:
             stats[event.source] = event.payload
             state["finished"] = True
@@ -249,9 +271,32 @@ def run_scenario_network(
     def experiment_request(message: dict[str, Any]) -> dict[str, Any]:
         """Órdenes de la HMI (otro hilo): se reenvían al gateway por el plano de experimento."""
         command = message.get("cmd")
+        if command == "detections":
+            since = int(message.get("since", 0))
+            with lock:
+                items = [{"seq": n, **item} for n, item in detections if n > since]
+                last = detections[-1][0] if detections else since
+            return {"ok": True, "seq": last, "items": items[-2000:]}
+        if command == "ack":
+            acknowledged.add(str(message.get("alarm_id")))
+            return {"ok": True}
+        if command == "stop":
+            state["stop"] = True
+            logger.warning("Parada solicitada desde la HMI")
+            return {"ok": True}
         if command == "status":
+            with lock:
+                alarms = [
+                    {**a, "acknowledged": a["alarm_id"] in acknowledged}
+                    for a in list(alarm_log.values())[-200:]
+                ]
             return {
                 "ok": True,
+                "run_id": run_id,
+                "mode": "network",
+                "time_scale": scale,
+                "duration_s": duration,
+                "alarms": alarms,
                 "scenario": scenario.name,
                 "sim_time": state["sim_time"],
                 "finished": state["finished"],
@@ -279,7 +324,10 @@ def run_scenario_network(
             return {"ok": True, "attack_id": attack_id}
         return {"ok": False, "error": f"Comando desconocido: {command}"}
 
-    channel = ExperimentServer(experiment_request) if with_ui else None
+    if external_channel:
+        channel = ExperimentServer.from_environment(experiment_request)
+    else:
+        channel = ExperimentServer(experiment_request) if with_ui else None
     status = "completed"
     failure: BaseException | None = None
     say(
@@ -303,6 +351,10 @@ def run_scenario_network(
         t0 = time.perf_counter()
         next_report = 0.1
         while not state["finished"]:
+            if state["stop"]:
+                status = "stopped"
+                say("Corrida detenida desde la HMI")
+                break
             for event in launcher.hub.drain(0.5):
                 handle(event)
             dead = launcher.dead_components()

@@ -7,11 +7,13 @@ OPC UA: el plano de datos queda exactamente como lo vería un sistema real.
 
 - Transporte: ``multiprocessing.connection`` sobre 127.0.0.1 (RNF-11), con autenticación por
   clave aleatoria de 32 bytes por corrida (desafío HMAC).
-- El orquestador publica la dirección y la clave a la HMI mediante variables de entorno.
-- Mensajes: diccionarios ``{"cmd": "status" | "arm" | "disarm", ...}``; respuesta
-  ``{"ok": bool, ...}``.
+- Con ``fdisim run --ui`` el orquestador publica la dirección y la clave a la HMI mediante
+  variables de entorno. Con ``fdisim ui`` es al revés: la HMI elige la dirección y la clave y
+  se las pasa a la corrida que lanza (``ExperimentServer.from_environment``).
+- Mensajes: diccionarios ``{"cmd": "status" | "detections" | "arm" | "disarm" | "ack" |
+  "stop", ...}``; respuesta ``{"ok": bool, ...}``.
 
-Implementado en la Fase 4.
+Implementado en la Fase 4; detecciones, alarmas y parada en las Fases 6 y 7.
 """
 
 from __future__ import annotations
@@ -34,14 +36,29 @@ Handler = Callable[[dict[str, Any]], dict[str, Any]]
 class ExperimentServer:
     """Lado del orquestador: atiende a la HMI en un hilo propio."""
 
-    def __init__(self, handler: Handler, host: str = "127.0.0.1") -> None:
+    def __init__(
+        self,
+        handler: Handler,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        authkey: bytes | None = None,
+    ) -> None:
         self.handler = handler
-        self.authkey = secrets.token_bytes(32)
-        self._listener = Listener((host, 0), authkey=self.authkey)
+        self.authkey = authkey or secrets.token_bytes(32)
+        self._listener = Listener((host, port), authkey=self.authkey)
         self.address: tuple[str, int] = self._listener.address
         self._closed = threading.Event()
         self._thread = threading.Thread(target=self._serve, name="canal-experimento", daemon=True)
         self.logger = logging.getLogger("fdisim.orchestrator.canal")
+
+    @classmethod
+    def from_environment(cls, handler: Handler) -> ExperimentServer:
+        """Servidor en la dirección y con la clave que dejó la HMI en el entorno."""
+        address, key = os.environ.get(ENV_ADDRESS), os.environ.get(ENV_KEY)
+        if not address or not key:
+            raise RuntimeError("Faltan FDISIM_EXPERIMENT_ADDRESS y FDISIM_EXPERIMENT_KEY")
+        host, port = address.rsplit(":", 1)
+        return cls(handler, host, int(port), bytes.fromhex(key))
 
     def start(self) -> None:
         self._thread.start()
@@ -121,3 +138,26 @@ class ExperimentClient:
 
     def disarm(self, attack_id: str) -> dict[str, Any]:
         return self.request({"cmd": "disarm", "attack_id": attack_id})
+
+    def detections(self, since: int = 0) -> dict[str, Any]:
+        return self.request({"cmd": "detections", "since": since})
+
+    def acknowledge(self, alarm_id: str) -> dict[str, Any]:
+        return self.request({"cmd": "ack", "alarm_id": alarm_id})
+
+    def stop(self) -> dict[str, Any]:
+        return self.request({"cmd": "stop"})
+
+
+def local_channel() -> tuple[tuple[str, int], bytes]:
+    """Dirección libre en 127.0.0.1 y clave nueva para una corrida lanzada por la HMI."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    return ("127.0.0.1", port), secrets.token_bytes(32)
+
+
+def channel_environment(address: tuple[str, int], authkey: bytes) -> dict[str, str]:
+    return {ENV_ADDRESS: f"{address[0]}:{address[1]}", ENV_KEY: authkey.hex()}
