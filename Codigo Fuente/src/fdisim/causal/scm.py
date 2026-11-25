@@ -20,10 +20,10 @@ rejilla de detección (Δ = ``detection.period_s``; la fila *t* contiene los val
   (con sus retardos) del grafo de referencia consolidado.
 
 Ambos estiman la distribución de los residuos a un paso en datos normales (media y desviación
-por variable), que el detector de la Fase 6 usa para decidir. ``simulate`` (gemelo causal en
-horizonte H, RF-33) llega en la Fase 6.
+por variable), que el detector de la Fase 6 usa para decidir. ``PhysicsInformedSCM.simulate``
+es el gemelo causal en horizonte H (RF-33).
 
-Implementado en la Fase 5. Dependencias: NumPy, SciPy, scikit-learn.
+Implementado en la Fase 5 (gemelo en la Fase 6). Dependencias: NumPy, SciPy, scikit-learn.
 """
 
 from __future__ import annotations
@@ -112,8 +112,8 @@ class StructuralCausalModel(ABC):
         return {tag: float(last[tag]) for tag in ENDOGENOUS}
 
     def simulate(self, history: Mapping[str, list[float]], horizon: int) -> dict[str, float]:
-        """Predicción en horizonte ``horizon`` (residuo multi-paso, RF-33)."""
-        raise NotImplementedError("Fase 6 — RF-33: gemelo causal multi-paso")
+        """Predicción en horizonte ``horizon`` (gemelo causal, residuo multi-paso, RF-33)."""
+        raise NotImplementedError(f"El SCM «{self.kind}» no tiene gemelo en horizonte")
 
 
 # ---------------------------------------------------------------------- físico-informado
@@ -136,6 +136,28 @@ class PhysicsParams:
     def pump_tau(self) -> float:
         """Constante de tiempo de la bomba equivalente a ``alpha`` [s]."""
         return -self.dt / math.log(1.0 - self.alpha) if 0 < self.alpha < 1 else math.nan
+
+
+def twin_levels(
+    p: PhysicsParams,
+    h1_start: float,
+    h2_start: float,
+    q_inputs: Iterable[float],
+    h1_inputs: Iterable[float],
+) -> tuple[float, float]:
+    """Integra los balances de masa desde ``(h1_start, h2_start)`` con entradas observadas.
+
+    ``q_inputs`` (FT-101) alimenta el tanque 1 y ``h1_inputs`` (LT-101 observado) el tanque 2;
+    ambas secuencias tienen un elemento por paso simulado.
+    """
+    two_g = 2.0 * p.gravity
+    k1, k2 = p.dt / p.area1, p.dt / p.area2
+    a = h1_start
+    b = h2_start
+    for q, h1 in zip(q_inputs, h1_inputs, strict=True):
+        a += k1 * (q - p.a1 * math.sqrt(two_g * max(a, 0.0)))
+        b += k2 * (p.a1 * math.sqrt(two_g * max(h1, 0.0)) - p.a2 * math.sqrt(two_g * max(b, 0.0)))
+    return a, b
 
 
 class PhysicsInformedSCM(StructuralCausalModel):
@@ -251,6 +273,25 @@ class PhysicsInformedSCM(StructuralCausalModel):
                 pred[P_101][1:] = np.clip(u[:-1] + du, p.out_min, p.out_max)
             out.append(pd.DataFrame(pred, index=frame.index))
         return _stack(out)
+
+    def simulate(self, history: Mapping[str, list[float]], horizon: int) -> dict[str, float]:
+        """Gemelo causal: niveles en el último instante simulados desde ``t − horizon``.
+
+        Cada nivel se integra ``horizon`` pasos desde su valor observado en ``t − horizon``
+        con las ecuaciones físicas y sus padres observados (residuos estructurados, RF-33/37):
+
+        - LT-101 con el caudal FT-101 observado;
+        - LT-102 con el nivel LT-101 observado.
+
+        Así el residuo de cada nivel solo depende de su propia ecuación, lo que permite
+        identificar la variable manipulada por la firma de residuos (RF-37).
+        """
+        h1, h2, q = (list(map(float, history[tag])) for tag in (LT_101, LT_102, FT_101))
+        if horizon < 1 or len(h1) <= horizon:
+            raise ValueError(f"Se necesitan más de {horizon} muestras de historia")
+        start = len(h1) - 1 - horizon
+        sim1, sim2 = twin_levels(self.params, h1[start], h2[start], q[start:-1], h1[start:-1])
+        return {LT_101: sim1, LT_102: sim2}
 
     # -------------------------------------------------------------- informe y persistencia
     def parameter_report(self, nominal: Mapping[str, float]) -> list[dict[str, float]]:

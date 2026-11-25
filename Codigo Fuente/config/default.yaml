@@ -59,9 +59,9 @@ opcua:                      # RF-10 a RF-15
 detection:                  # RF-33 a RF-40
   period_s: 0.5
   causal_model_dir: data/models/causal_v1
-  residuals: { multistep_horizon: 20 }
+  residuals: { multistep_horizons: [20, 120] }   # pasos del gemelo causal (10 s y 60 s)
   decision:
-    target_fpr: 0.01
+    target_fpr: 0.005        # FPR objetivo por muestra en validación (RF-34); ver guía de detección
     cusum: { k: 0.5, h: 5.0 }
     ewma: { lambda: 0.2, L: 3.0 }
     alarm_hold_s: 2.0
