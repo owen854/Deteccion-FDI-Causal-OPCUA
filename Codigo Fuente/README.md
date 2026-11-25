@@ -23,6 +23,8 @@ Documentos de referencia (carpeta `Documentacion/` del repositorio):
 | 02 — Informe OE1 | Revisión de OPC UA y FDI, y selección tecnológica |
 | 03 — Plan de Gestión del Proyecto | Fases, sprints, cronograma, riesgos y calidad |
 | 05 — Estudio comparativo del modelo causal | Grafo físico frente a PCMCI+ y Granger, consolidación y SCM (Fase 5) |
+| 06 — Informe de cierre de la versión 1 | Solución, resultados del detector frente al método base, alcance y requerimientos diferidos (Fases 0 a 7) |
+| Presentación y guion de cierre | Diapositivas de 10 minutos para tres expositores y su guion con tiempos y preguntas probables |
 
 Manual de usuario: [docs/manual_usuario.md](docs/manual_usuario.md).
 
