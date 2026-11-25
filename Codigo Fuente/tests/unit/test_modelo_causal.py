@@ -169,6 +169,7 @@ def test_entrenamiento_completo(config, grid, tmp_path):
         "graph_physical.graphml",
         "figures/grafo_referencia.png",
         "figures/residuos_validacion.png",
+        "detector.json",  # Fase 6: calibración de los detectores con el mismo dataset
     ):
         assert (out / name).is_file(), name
     attacked = grid.assign(label=1)
