@@ -247,6 +247,17 @@ def train_causal_model(
     (out_dir / "report.md").write_text(render_report(report, metadata), encoding="utf-8")
     export_graph(prior, out_dir / "graph_physical.graphml")  # grafo a priori, para comparar
     _say(progress, f"Modelo guardado en {out_dir}")
+    if val is not None:  # Fase 6: calibración de los detectores con el mismo dataset (RF-34)
+        from fdisim.detection.pipeline import calibrate_detectors
+
+        calibrate_detectors(
+            out_dir,
+            config,
+            train,
+            val,
+            dataset={"train": str(train_path), "val": str(val_path)},
+            progress=progress,
+        )
     return manifest
 
 
