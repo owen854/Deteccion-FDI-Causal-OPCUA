@@ -78,6 +78,8 @@ Codigo Fuente/
 
 ## Inicio rápido (un solo paso)
 
+Guía completa, desde un equipo sin nada instalado hasta el aplicativo funcionando: [GUIA_EJECUCION.md](GUIA_EJECUCION.md).
+
 1. Instale Python 3.12 y dé doble clic en `instalar.bat` (una sola vez).
 2. Dé doble clic en **`FDISim.bat`**. Se abre el navegador con el aplicativo; la primera vez crea los certificados y el modelo causal.
 
