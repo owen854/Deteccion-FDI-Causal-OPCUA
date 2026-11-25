@@ -136,12 +136,33 @@ class RunManager:
                 self._run_blocking(
                     ["train", "--data", str(paths.PROCESSED_DIR / "v1" / "train.parquet")]
                 )
+            elif not self.detectors_ready:
+                # Modelo de la Fase 5 sin detector.json: se calibra con su propio dataset (que
+                # se regenera idéntico, por semilla, si ya no existe).
+                self.prepare_status = "calibrando los detectores"
+                self._calibrate()
             self.prepare_status = "listo" if self.model_ready else "sin modelo causal"
         except Exception as exc:
             self.prepare_status = f"error: {exc}"
             self.logger.exception("Falló la preparación del aplicativo")
         finally:
             self.preparing = False
+
+    @property
+    def detectors_ready(self) -> bool:
+        from fdisim.detection.pipeline import DETECTOR_FILE, model_dir_of
+
+        return (model_dir_of(self.config) / DETECTOR_FILE).is_file()
+
+    def _calibrate(self) -> None:
+        from fdisim.detection.pipeline import calibrate_from_manifest, model_dir_of
+
+        try:
+            calibrate_from_manifest(model_dir_of(self.config), self.config, self._say)
+        except FileNotFoundError:
+            self.prepare_status = "regenerando el dataset para calibrar los detectores"
+            self._run_blocking(["dataset"])
+            calibrate_from_manifest(model_dir_of(self.config), self.config, self._say)
 
     def _command(self, args: list[str]) -> list[str]:
         return [sys.executable, "-X", "utf8", "-m", "fdisim", *args, "--config", self.config_path]
